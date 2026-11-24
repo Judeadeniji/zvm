@@ -26,6 +26,36 @@
 
 - Always use `zig17` instead of `zig` for all Zig-related commands (e.g., `zig17 build`, `zig17 build test`, `zig17 run`, etc.).
 - Do **not** invoke the `zig` command directly; always use `zig17`.
+- **Always Commit After Each Step**: Whenever a step or milestone is completed and verified, immediately commit the changes.
+
+## Architectural Rules & Separation of Concerns
+
+- **Strict Separation of Concerns**: Do **not** jam everything into one or two files. Every module must have a single, cohesive responsibility.
+- **Modular Directory & File Structure**:
+  - `src/paths.zig`: Manages the root ZVM directory structure (`~/.zvm/versions/`, `bin/`, `cache/`, `default`), environment overrides (`ZVM_PATH`, `XDG_DATA_HOME`), and path resolution.
+  - `src/version.zig`: Represents versions (`SemVer`, `master`), version ordering, comparison, and constraint checking.
+  - `src/resolver.zig`: Traverses parent directories, parses `.zig-version` and `build.zig.zon`, and determines the target version according to the resolution hierarchy.
+  - `src/router.zig`: Handles process delegation (`execv` / child process spawning) to transparently execute the resolved Zig binary with forwarded arguments and streams.
+  - `src/downloader.zig`: Release metadata fetching, downloading, SHA-256 integrity verification, and archive extraction.
+  - `src/cli/`: CLI subcommands are modularized into dedicated files (e.g., `src/cli/install.zig`, `src/cli/use.zig`, `src/cli/pin.zig`, `src/cli/list.zig`, etc.), while `src/main.zig` only wires the command tree and initializes the CLI runner.
+
+## Zig 0.17.0 API & Idioms (from `.agents/skills/zig-0-17`)
+
+All code in this project targets **Zig 0.17.0**. Adhere to the following Zig 0.17 idioms:
+
+- **String Printing**: Use `allocator.print(...)` directly. `std.fmt.allocPrint` has moved into `std.mem.Allocator`.
+- **Enum Conversions**: Use `@backingInt(val)` and `@fromBackingInt(val)` instead of `@intFromEnum` / `@enumFromInt`.
+- **Array Repetition**: Use `@splat(val)`. The `[1]T{val} ** len` repetition syntax was removed in 0.17.
+- **Bitcasts**: `@bitCast` is strictly for logical bit representation; do not use on `extern struct` or `extern union` (use `@ptrCast` instead).
+- **ArrayList**: Use `list.last()` (returns `?T`) instead of `getLastOrNull()`, and `list.last().?` instead of `getLast()`.
+- **Memory Allocation**: Use `std.heap.SafeAllocator` for safe/debug allocation instead of `DebugAllocator`.
+- **Syntax Removals**:
+  - `void{}` is removed; use `{}`.
+  - `errdefer |err|` capture syntax is removed. Wrap logic in an inner function and use `catch |err|`.
+  - `i0` is removed; use `u0`.
+- **Standard Entrypoint**: `pub fn main(init: std.process.Init) !void`. Access system services via `init.io`, `init.gpa`, `init.arena`, and `init.environ_map`.
+- **IO & Filesystem**: In Zig 0.17, file I/O operations are organized under `std.Io` and `std.Io.Dir` / `std.Io.File`.
+- read @./.agents/skills/zig-0-17
 
 ## Idiomatic Zig & Coding Standards
 
@@ -38,7 +68,7 @@ Idiomatic Zig favors explicit control, predictable performance, and clear impera
 - **Imperative loops over pipelines**: Use explicit `for` and `while` loops rather than chained functional pipelines for clarity and predictable control flow.
 - **Dot literals (`.{ ... }`)**: Use anonymous struct, tuple, and enum literals when the target type is already known from context.
 - **Intrusive data structures**: Embed linking fields directly inside structs when cache locality or zero-wrapper layout matters (e.g., linked lists, arena-style patterns).
-- **Standard Library Preference**: Prefer the Zig standard library (`std`) over external dependencies where practical (e.g., `std.http.Client`, `std.json`, `std.tar`, `std.compress.gzip`, `std.fs`, `std.process`).
+- **Standard Library Preference**: Prefer the Zig standard library (`std`) over external dependencies where practical (e.g., `std.http.Client`, `std.json`, `std.tar`, `std.compress.gzip`, `std.Io`, `std.process`).
 
 ### Naming & Structure
 - **Variables & fields**: `snake_case` (e.g., `file_path`, `version_str`).
