@@ -11,8 +11,12 @@ pub const resolve = resolver.resolve;
 pub const ResolvedVersion = resolver.ResolvedVersion;
 pub const ResolutionSource = resolver.ResolutionSource;
 
+pub const router = @import("router.zig");
+pub const Router = router.Router;
+
 test {
     _ = paths;
     _ = version;
     _ = resolver;
+    _ = router;
 }
