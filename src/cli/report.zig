@@ -222,9 +222,13 @@ pub const Reporter = struct {
                 try self.fail("Could not download the Zig release.\n", .{});
                 try self.hint("Check your network connection and try again.\n", .{});
             },
-            zvm.errors.DownloadError.InvalidIndexFormat, zvm.errors.DownloadError.InvalidReleaseFormat, zvm.errors.DownloadError.InvalidArtifactFields, zvm.errors.DownloadError.MissingChecksum, zvm.errors.DownloadError.MissingTarballUrl => {
+            zvm.errors.DownloadError.InvalidIndexFormat, zvm.errors.DownloadError.InvalidReleaseFormat, zvm.errors.DownloadError.InvalidArtifactFields, zvm.errors.DownloadError.InvalidTargetFormat, zvm.errors.DownloadError.MissingChecksum, zvm.errors.DownloadError.MissingTarballUrl => {
                 try self.fail("The Zig release index has an unexpected format.\n", .{});
                 try self.hint("Try again later; if the problem persists, report it at https://github.com/Judeadeniji/zvm/issues.\n", .{});
+            },
+            zvm.errors.DownloadError.UnsupportedArchitecture, zvm.errors.DownloadError.UnsupportedOperatingSystem, zvm.errors.DownloadError.UnsupportedPlatformCombination => {
+                try self.fail("Zig does not publish a binary for this platform.\n", .{});
+                try self.hint("Run 'zvm list-remote --all' to see published targets, or build Zig from source.\n", .{});
             },
             zvm.errors.DownloadError.UnsupportedArchiveFormat => {
                 try self.fail("The downloaded archive uses an unsupported format.\n", .{});
@@ -283,6 +287,7 @@ fn colorMode(environ_map: ?*const std.process.Environ.Map) ColorMode {
         const value = std.mem.trim(u8, raw, " \t\r\n");
         if (std.ascii.eqlIgnoreCase(value, "always") or std.mem.eql(u8, value, "1") or std.ascii.eqlIgnoreCase(value, "true")) return .always;
         if (std.ascii.eqlIgnoreCase(value, "never") or std.mem.eql(u8, value, "0") or std.ascii.eqlIgnoreCase(value, "false")) return .never;
+        if (std.ascii.eqlIgnoreCase(value, "auto")) return .auto;
     }
     if (env.get("NO_COLOR")) |value| {
         if (value.len > 0) return .never;
