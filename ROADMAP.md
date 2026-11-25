@@ -25,7 +25,7 @@ This document outlines the development phases, architecture milestones, and plan
 - [x] **Execution Dispatcher** (`src/router.zig`)
   - [x] Forward calls to the resolved Zig binary transparently.
   - [x] Implement zero-overhead process replacement (`std.process.replace` / `execv`) on POSIX systems.
-  - [ ] Verify/implement child process spawning with stream inheritance and exit code propagation on Windows.
+  - [x] Implement child process spawning with stream inheritance and exit code propagation on Windows (`spawnAndWait`, verified via `x86_64-windows` build).
 - [x] **Shim Management** (`src/shim.zig`)
   - [x] Generate a `zig` shim in `~/.zvm/bin/` pointing to the `zvm` dispatcher (`zvm setup` / `zvm shim`).
   - [x] Provide self-check helper (`zvm doctor`) to verify shim state and `PATH` priority.

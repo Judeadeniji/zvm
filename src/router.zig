@@ -31,8 +31,46 @@ pub const Router = struct {
         return std.mem.eql(u8, base, "zig") or std.mem.eql(u8, base, "zig.exe");
     }
 
-    /// Resolves the required Zig version for `current_dir` and replaces the current process with
-    /// the target Zig compiler binary, forwarding all arguments.
+    /// Converts a child process termination status into a POSIX-compatible exit code.
+    pub fn termToExitCode(term: std.process.Child.Term) u8 {
+        return switch (term) {
+            .exited => |code| code,
+            .signal => |sig| 128 +% @as(u8, @truncate(@backingInt(sig))),
+            .stopped => |sig| 128 +% @as(u8, @truncate(@backingInt(sig))),
+            .unknown => 1,
+        };
+    }
+
+    /// Spawns a child process with inherited standard streams and waits for its exit code.
+    /// Used on targets where `std.process.can_replace` is false (such as Windows).
+    pub fn spawnAndWait(
+        io: Io,
+        argv: []const []const u8,
+        environ_map: ?*const EnvironMap,
+    ) !u8 {
+        var child = try std.process.spawn(io, .{
+            .argv = argv,
+            .environ_map = environ_map,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
+        errdefer child.kill(io);
+
+        const term = try child.wait(io);
+        return termToExitCode(term);
+    }
+
+    fn printExecError(io: Io, target_bin: []const u8, err: anyerror) void {
+        var err_buf: [256]u8 = undefined;
+        var err_writer = Io.File.Writer.init(.stderr(), io, &err_buf);
+        const w = &err_writer.interface;
+        _ = w.print("error: Failed to execute '{s}': {s}\n", .{ target_bin, @errorName(err) }) catch {};
+        w.flush() catch {};
+    }
+
+    /// Resolves the required Zig version for `current_dir` and delegates execution to
+    /// the target Zig compiler binary, forwarding all arguments and exit status.
     pub fn routeAndExec(
         self: *const Router,
         current_dir: []const u8,
@@ -88,18 +126,20 @@ pub const Router = struct {
             argv[i + 1] = arg;
         }
 
-        const replace_err = std.process.replace(self.io, .{
-            .argv = argv,
-            .environ_map = self.environ_map,
-        });
-
-        // If replace returns, it failed
-        var err_buf: [256]u8 = undefined;
-        var err_writer = Io.File.Writer.init(.stderr(), self.io, &err_buf);
-        const w = &err_writer.interface;
-        _ = w.print("error: Failed to execute '{s}': {s}\n", .{ target_bin, @errorName(replace_err) }) catch {};
-        w.flush() catch {};
-        std.process.exit(1);
+        if (std.process.can_replace) {
+            const replace_err = std.process.replace(self.io, .{
+                .argv = argv,
+                .environ_map = self.environ_map,
+            });
+            printExecError(self.io, target_bin, replace_err);
+            std.process.exit(1);
+        } else {
+            const exit_code = spawnAndWait(self.io, argv, self.environ_map) catch |err| {
+                printExecError(self.io, target_bin, err);
+                std.process.exit(1);
+            };
+            std.process.exit(exit_code);
+        }
     }
 };
 
@@ -109,4 +149,19 @@ test "isZigShim detection" {
     try std.testing.expect(Router.isZigShim("C:\\bin\\zig.exe"));
     try std.testing.expect(!Router.isZigShim("zvm"));
     try std.testing.expect(!Router.isZigShim("/usr/local/bin/zvm"));
+}
+
+test "termToExitCode and spawnAndWait propagation" {
+    try std.testing.expectEqual(0, Router.termToExitCode(.{ .exited = 0 }));
+    try std.testing.expectEqual(42, Router.termToExitCode(.{ .exited = 42 }));
+    try std.testing.expectEqual(1, Router.termToExitCode(.{ .unknown = 9 }));
+
+    if (@import("builtin").target.os.tag != .windows) {
+        const io = std.testing.io;
+        const ok_code = try Router.spawnAndWait(io, &.{ "/bin/sh", "-c", "exit 0" }, null);
+        try std.testing.expectEqual(0, ok_code);
+
+        const fail_code = try Router.spawnAndWait(io, &.{ "/bin/sh", "-c", "exit 7" }, null);
+        try std.testing.expectEqual(7, fail_code);
+    }
 }

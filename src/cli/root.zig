@@ -98,7 +98,8 @@ pub fn run(init: std.process.Init) !u8 {
         .cwd = cwd,
     };
 
-    var args_iter = init.minimal.args.iterate();
+    var args_iter = try init.minimal.args.iterateAllocator(gpa);
+    defer args_iter.deinit();
     return root.run(&args_iter, .{ .data = &app_ctx });
 }
 
