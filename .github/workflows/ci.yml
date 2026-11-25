@@ -16,10 +16,27 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Zig 0.17.0
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
+      - name: Install Zig 0.17.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIG_VER="0.17.0"
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   OS=linux;   ARCH=x86_64;  EXT=tar.xz ;;
+            macOS-ARM64) OS=macos;   ARCH=aarch64; EXT=tar.xz ;;
+            macOS-X64)   OS=macos;   ARCH=x86_64;  EXT=tar.xz ;;
+            Windows-X64) OS=windows; ARCH=x86_64;  EXT=zip    ;;
+            *) echo "Unsupported platform: ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+          esac
+          NAME="zig-${OS}-${ARCH}-${ZIG_VER}"
+          URL="https://ziglang.org/download/${ZIG_VER}/${NAME}.${EXT}"
+          if [ "$EXT" = "zip" ]; then
+            curl -fsSL "$URL" -o zig.zip
+            7z x zig.zip -o. > /dev/null
+          else
+            curl -fsSL "$URL" | tar -xJ
+          fi
+          echo "$PWD/$NAME" >> "$GITHUB_PATH"
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -44,10 +61,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Zig 0.17.0
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
+      - name: Install Zig 0.17.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.17.0/zig-linux-x86_64-0.17.0.tar.xz | tar -xJ
+          echo "$PWD/zig-linux-x86_64-0.17.0" >> "$GITHUB_PATH"
 
       - name: Fetch Zig Minisign public key
         id: minisig
