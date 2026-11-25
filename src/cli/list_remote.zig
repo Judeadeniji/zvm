@@ -27,7 +27,13 @@ fn handle(ctx: zli.CommandContext) !void {
 
     const json_bytes = zvm.downloader.fetchIndexJson(ctx.io, ctx.allocator, ctx.environ_map) catch |err| {
         ctx.spinner.stop();
-        try app.reporter.reportError(err);
+        switch (err) {
+            zvm.errors.DownloadError.HttpRequestFailed => {
+                try app.reporter.fail("Could not fetch the Zig release index from ziglang.org.\n", .{});
+                try app.reporter.hint("Check your network connection and try again.\n", .{});
+            },
+            else => try app.reporter.reportError(err),
+        }
         return error.Reported;
     };
     defer ctx.allocator.free(json_bytes);

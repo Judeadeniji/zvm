@@ -350,6 +350,27 @@ test "Reporter writes errors to stderr without raw error names" {
     try std.testing.expect(std.mem.indexOf(u8, err.written(), "InvalidVersion") == null);
 }
 
+test "Reporter status rows share a consistent tag width" {
+    const allocator = std.testing.allocator;
+
+    var out: Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    var err: Io.Writer.Allocating = .init(allocator);
+    defer err.deinit();
+
+    const reporter = Reporter.initWithColor(&out.writer, &err.writer, false, false);
+    try reporter.status(.ok, "ok\n", .{});
+    try reporter.status(.warn, "warn\n", .{});
+    try reporter.status(.fail, "fail\n", .{});
+    try reporter.status(.info, "info\n", .{});
+
+    try std.testing.expectEqualStrings(
+        "[OK]   ok\n[WARN] warn\n[FAIL] fail\n[INFO] info\n",
+        out.written(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), err.written().len);
+}
+
 test "Reporter colors output only when enabled" {
     const allocator = std.testing.allocator;
 
