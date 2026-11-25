@@ -1,10 +1,13 @@
 //! `zvm which` subcommand for printing the binary path of the active or specified Zig version.
 
+const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+const WhichError = zvm.errors.CliError || zvm.resolver.ResolveError || std.Io.Writer.Error;
+
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "which",
         .description = "Display the binary path of the active or specified Zig version",
@@ -17,20 +20,20 @@ pub fn command(init_options: zli.InitOptions) !*zli.Command {
     return cmd;
 }
 
-fn handle(ctx: zli.CommandContext) !void {
+fn handle(ctx: zli.CommandContext) WhichError!void {
     const app = ctx.getContextData(AppContext);
 
     if (ctx.getArg("version")) |raw_version| {
         const parsed = zvm.Version.parse(raw_version) catch {
             try ctx.writer.print("error: Invalid Zig version '{s}'.\n", .{raw_version});
-            return error.InvalidVersion;
+            return zvm.errors.CliError.InvalidVersion;
         };
         const canonical = try parsed.toString(ctx.allocator);
         defer ctx.allocator.free(canonical);
 
         if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, canonical)) {
             try ctx.writer.print("error: Zig version '{s}' is not installed.\n", .{canonical});
-            return error.VersionNotInstalled;
+            return zvm.errors.CliError.VersionNotInstalled;
         }
         const bin_path = try app.paths.versionZigBin(ctx.allocator, canonical);
         defer ctx.allocator.free(bin_path);
@@ -46,7 +49,7 @@ fn handle(ctx: zli.CommandContext) !void {
 
     if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version)) {
         try ctx.writer.print("error: Resolved Zig version '{s}' is not installed.\n", .{resolved.version});
-        return error.VersionNotInstalled;
+        return zvm.errors.CliError.VersionNotInstalled;
     }
 
     const bin_path = try app.paths.versionZigBin(ctx.allocator, resolved.version);

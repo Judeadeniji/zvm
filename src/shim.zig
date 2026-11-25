@@ -5,7 +5,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
+const errors = @import("errors.zig");
 const Paths = @import("paths.zig").Paths;
+
+pub const ShimError = errors.ShimError;
 
 pub const ShimStatus = union(enum) {
     missing,
@@ -65,7 +68,7 @@ pub fn inspectShim(
     io: Io,
     allocator: Allocator,
     expected_exe: ?[]const u8,
-) !ShimStatus {
+) (Allocator.Error || Io.Dir.ReadLinkError || Io.Dir.AccessError)!ShimStatus {
     const shim_path = try paths.zigShimPath(allocator);
     defer allocator.free(shim_path);
 
@@ -107,6 +110,14 @@ pub fn inspectShim(
     return .{ .valid = try allocator.dupe(u8, target) };
 }
 
+pub const SetupShimError = ShimError ||
+    Allocator.Error ||
+    Io.Dir.CreateDirPathError ||
+    Io.Dir.ReadLinkError ||
+    Io.Dir.AccessError ||
+    Io.Dir.CopyFileError ||
+    Io.Dir.SymLinkError;
+
 /// Creates or updates the `zig` shim in `paths.bin_dir` pointing to `zvm_exe`.
 pub fn setupShim(
     paths: *const Paths,
@@ -114,7 +125,7 @@ pub fn setupShim(
     allocator: Allocator,
     zvm_exe: []const u8,
     force: bool,
-) !SetupResult {
+) SetupShimError!SetupResult {
     try paths.ensureDirs(io);
 
     const shim_path = try paths.zigShimPath(allocator);
@@ -141,7 +152,7 @@ pub fn setupShim(
         .missing => .created,
         .broken_symlink => .updated,
         .wrong_target, .not_a_symlink => blk: {
-            if (!force) return error.ShimAlreadyExists;
+            if (!force) return ShimError.ShimAlreadyExists;
             break :blk .updated;
         },
     };
@@ -171,7 +182,7 @@ pub fn checkPathOrder(
     io: Io,
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
-) !PathCheck {
+) Allocator.Error!PathCheck {
     const path_env = if (environ_map) |env| (env.get("PATH") orelse "") else "";
     if (path_env.len == 0) {
         return .{
@@ -250,7 +261,7 @@ test "setupShim creates, detects, and updates symlink" {
     defer valid.deinit(allocator);
     switch (valid) {
         .valid => |t| try std.testing.expectEqualStrings(fake_zvm, t),
-        else => return error.ExpectedValidShim,
+        else => return error.TestUnexpectedResult,
     }
 
     // Running again without force reports already_configured

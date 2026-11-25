@@ -10,7 +10,7 @@ pub const CleanSummary = struct {
     bytes_freed: u64,
 };
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "clean",
         .description = "Remove cached download archives from ~/.zvm/cache/",

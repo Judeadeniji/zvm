@@ -6,7 +6,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "pin",
         .description = "Pin a Zig version or semver constraint for the current project (.zig-version)",
@@ -19,14 +19,20 @@ pub fn command(init_options: zli.InitOptions) !*zli.Command {
     return cmd;
 }
 
-fn handle(ctx: zli.CommandContext) !void {
+const PinError = zvm.errors.CliError ||
+    std.mem.Allocator.Error ||
+    std.Io.Writer.Error ||
+    std.Io.Dir.OpenError ||
+    std.Io.Dir.WriteFileError;
+
+fn handle(ctx: zli.CommandContext) PinError!void {
     const app = ctx.getContextData(AppContext);
-    const raw_input = ctx.getArg("version") orelse return error.MissingVersion;
+    const raw_input = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
     const trimmed = std.mem.trim(u8, raw_input, " \t\r\n");
 
     const constraint = zvm.Constraint.parse(trimmed) catch {
         try ctx.writer.print("error: Invalid Zig version or constraint '{s}'.\n", .{trimmed});
-        return error.InvalidVersion;
+        return zvm.errors.CliError.InvalidVersion;
     };
 
     const pinned_text = if (constraint.exactPin()) |exact|

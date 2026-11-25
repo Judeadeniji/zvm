@@ -3,6 +3,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const SemanticVersion = std.SemanticVersion;
+const errors = @import("errors.zig");
+
+pub const VersionParseError = errors.VersionParseError;
+pub const ConstraintParseError = errors.ConstraintParseError;
 
 pub const Version = struct {
     tag: Tag,
@@ -15,9 +19,9 @@ pub const Version = struct {
     };
 
     /// Parse a version string, e.g. "0.17.0", "v0.17.0", "master", "nightly", "0.17.0-dev.12+abc".
-    pub fn parse(text: []const u8) !Version {
+    pub fn parse(text: []const u8) VersionParseError!Version {
         const trimmed = std.mem.trim(u8, text, " \t\r\n");
-        if (trimmed.len == 0) return error.EmptyVersionString;
+        if (trimmed.len == 0) return VersionParseError.EmptyVersionString;
 
         if (std.mem.eql(u8, trimmed, "master") or std.mem.eql(u8, trimmed, "nightly")) {
             return .{
@@ -72,7 +76,7 @@ pub const Version = struct {
     }
 
     /// Returns an allocated string representation of the version.
-    pub fn toString(self: Version, allocator: Allocator) ![]u8 {
+    pub fn toString(self: Version, allocator: Allocator) Allocator.Error![]u8 {
         switch (self.tag) {
             .master => return allocator.dupe(u8, "master"),
             .semver => {
@@ -111,9 +115,9 @@ pub const Constraint = struct {
         op: Op,
         version: Version,
 
-        pub fn parse(raw: []const u8) !Atom {
+        pub fn parse(raw: []const u8) ConstraintParseError!Atom {
             const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-            if (trimmed.len == 0) return error.EmptyConstraint;
+            if (trimmed.len == 0) return ConstraintParseError.EmptyConstraint;
 
             const parsed_op: struct { op: Op, rest: []const u8 } = if (std.mem.startsWith(u8, trimmed, ">="))
                 .{ .op = .gte, .rest = trimmed[2..] }
@@ -134,7 +138,7 @@ pub const Constraint = struct {
 
             const ver = try Version.parse(parsed_op.rest);
             if (ver.tag == .master and parsed_op.op != .exact) {
-                return error.InvalidMasterConstraint;
+                return ConstraintParseError.InvalidMasterConstraint;
             }
             return .{ .op = parsed_op.op, .version = ver };
         }
@@ -195,31 +199,31 @@ pub const Constraint = struct {
 
     /// Parses a version constraint string such as `"0.17.0"`, `"master"`, `">=0.16.0"`,
     /// `"^0.17.0"`, `"~0.17.0"`, or space-separated ranges like `">=0.16.0 <0.18.0"`.
-    pub fn parse(text: []const u8) !Constraint {
+    pub fn parse(text: []const u8) ConstraintParseError!Constraint {
         const trimmed = std.mem.trim(u8, text, " \t\r\n");
-        if (trimmed.len == 0) return error.EmptyConstraint;
+        if (trimmed.len == 0) return ConstraintParseError.EmptyConstraint;
 
         var c: Constraint = .{};
         var it = std.mem.tokenizeAny(u8, trimmed, " \t,");
         while (it.next()) |token| {
             // Merge standalone operator tokens like `>= 0.17.0`? No, check below if token is bare operator:
             if (isBareOperator(token)) {
-                const next_tok = it.next() orelse return error.MissingVersionAfterOperator;
+                const next_tok = it.next() orelse return ConstraintParseError.MissingVersionAfterOperator;
                 var joined_buf: [128]u8 = undefined;
-                if (token.len + next_tok.len > joined_buf.len) return error.ConstraintTooLong;
+                if (token.len + next_tok.len > joined_buf.len) return ConstraintParseError.ConstraintTooLong;
                 @memcpy(joined_buf[0..token.len], token);
                 @memcpy(joined_buf[token.len .. token.len + next_tok.len], next_tok);
                 // Re-parse using Version.parse on next_tok directly + op
                 const atom_op = parseBareOp(token).?;
                 const ver = try Version.parse(next_tok);
-                if (ver.tag == .master and atom_op != .exact) return error.InvalidMasterConstraint;
+                if (ver.tag == .master and atom_op != .exact) return ConstraintParseError.InvalidMasterConstraint;
                 try c.append(.{ .op = atom_op, .version = ver });
                 continue;
             }
             try c.append(try Atom.parse(token));
         }
 
-        if (c.len == 0) return error.EmptyConstraint;
+        if (c.len == 0) return ConstraintParseError.EmptyConstraint;
         return c;
     }
 
@@ -238,8 +242,8 @@ pub const Constraint = struct {
         return parseBareOp(tok) != null;
     }
 
-    fn append(self: *Constraint, atom: Atom) !void {
-        if (self.len >= max_atoms) return error.TooManyConstraintTerms;
+    fn append(self: *Constraint, atom: Atom) ConstraintParseError!void {
+        if (self.len >= max_atoms) return ConstraintParseError.TooManyConstraintTerms;
         self.atoms[self.len] = atom;
         self.len += 1;
     }
@@ -270,13 +274,13 @@ test "parse master and releases" {
 
     const v_release = try Version.parse("0.17.0");
     try std.testing.expectEqual(Version.Tag.semver, v_release.tag);
-    try std.testing.expectEqual(@as(usize, 0), v_release.semver.?.major);
-    try std.testing.expectEqual(@as(usize, 17), v_release.semver.?.minor);
-    try std.testing.expectEqual(@as(usize, 0), v_release.semver.?.patch);
+    try std.testing.expectEqual(0, v_release.semver.?.major);
+    try std.testing.expectEqual(17, v_release.semver.?.minor);
+    try std.testing.expectEqual(0, v_release.semver.?.patch);
 
     const v_with_prefix = try Version.parse("v0.16.0");
     try std.testing.expectEqual(Version.Tag.semver, v_with_prefix.tag);
-    try std.testing.expectEqual(@as(usize, 16), v_with_prefix.semver.?.minor);
+    try std.testing.expectEqual(16, v_with_prefix.semver.?.minor);
 }
 
 test "version ordering" {

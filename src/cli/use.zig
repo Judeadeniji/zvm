@@ -1,10 +1,17 @@
 //! `zvm use` subcommand for switching the global default Zig version.
 
+const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+const UseError = zvm.errors.CliError ||
+    std.mem.Allocator.Error ||
+    std.Io.Writer.Error ||
+    std.Io.Dir.CreateDirPathError ||
+    std.Io.Dir.WriteFileError;
+
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "use",
         .description = "Switch the global default Zig version",
@@ -17,13 +24,13 @@ pub fn command(init_options: zli.InitOptions) !*zli.Command {
     return cmd;
 }
 
-fn handle(ctx: zli.CommandContext) !void {
+fn handle(ctx: zli.CommandContext) UseError!void {
     const app = ctx.getContextData(AppContext);
-    const raw_version = ctx.getArg("version") orelse return error.MissingVersion;
+    const raw_version = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
 
     const parsed = zvm.Version.parse(raw_version) catch {
         try ctx.writer.print("error: Invalid Zig version '{s}'.\n", .{raw_version});
-        return error.InvalidVersion;
+        return zvm.errors.CliError.InvalidVersion;
     };
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
@@ -31,7 +38,7 @@ fn handle(ctx: zli.CommandContext) !void {
     if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, canonical)) {
         try ctx.writer.print("error: Zig version '{s}' is not installed.\n", .{canonical});
         try ctx.writer.print("hint: Run 'zvm install {s}' first.\n", .{canonical});
-        return error.VersionNotInstalled;
+        return zvm.errors.CliError.VersionNotInstalled;
     }
 
     try app.paths.writeDefaultVersion(ctx.io, canonical);

@@ -11,6 +11,12 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 const Paths = @import("paths.zig").Paths;
 const Version = @import("version.zig").Version;
 const minisig = @import("minisig.zig");
+const errors = @import("errors.zig");
+
+pub const TargetError = errors.TargetError;
+pub const ArchiveError = errors.ArchiveError;
+pub const ChecksumError = errors.ChecksumError;
+pub const DownloadError = errors.DownloadError;
 
 pub const index_url = "https://ziglang.org/download/index.json";
 
@@ -76,16 +82,16 @@ pub const ArchiveFormat = enum {
     tar_gz,
     zip,
 
-    pub fn fromFilename(name: []const u8) !ArchiveFormat {
+    pub fn fromFilename(name: []const u8) ArchiveError!ArchiveFormat {
         if (std.mem.endsWith(u8, name, ".tar.xz")) return .tar_xz;
         if (std.mem.endsWith(u8, name, ".tar.gz") or std.mem.endsWith(u8, name, ".tgz")) return .tar_gz;
         if (std.mem.endsWith(u8, name, ".zip")) return .zip;
-        return error.UnsupportedArchiveFormat;
+        return ArchiveError.UnsupportedArchiveFormat;
     }
 };
 
 /// Maps CPU architecture and OS tag to the target key used in ziglang.org's `index.json`.
-pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) ![]const u8 {
+pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) TargetError![]const u8 {
     const arch_str = switch (arch) {
         .x86_64 => "x86_64",
         .aarch64 => "aarch64",
@@ -94,7 +100,7 @@ pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) ![]const u8 {
         .riscv64 => "riscv64",
         .powerpc64le => "powerpc64le",
         .loongarch64 => "loongarch64",
-        else => return error.UnsupportedArchitecture,
+        else => return TargetError.UnsupportedArchitecture,
     };
 
     const os_str = switch (os) {
@@ -102,7 +108,7 @@ pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) ![]const u8 {
         .macos => "macos",
         .windows => "windows",
         .freebsd => "freebsd",
-        else => return error.UnsupportedOperatingSystem,
+        else => return TargetError.UnsupportedOperatingSystem,
     };
 
     return switch (arch) {
@@ -123,33 +129,33 @@ pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) ![]const u8 {
         .x86 => switch (os) {
             .linux => "x86-linux",
             .windows => "x86-windows",
-            else => error.UnsupportedPlatformCombination,
+            else => TargetError.UnsupportedPlatformCombination,
         },
         .arm => switch (os) {
             .linux => "arm-linux",
-            else => error.UnsupportedPlatformCombination,
+            else => TargetError.UnsupportedPlatformCombination,
         },
         .riscv64 => switch (os) {
             .linux => "riscv64-linux",
-            else => error.UnsupportedPlatformCombination,
+            else => TargetError.UnsupportedPlatformCombination,
         },
         .powerpc64le => switch (os) {
             .linux => "powerpc64le-linux",
-            else => error.UnsupportedPlatformCombination,
+            else => TargetError.UnsupportedPlatformCombination,
         },
         .loongarch64 => switch (os) {
             .linux => "loongarch64-linux",
-            else => error.UnsupportedPlatformCombination,
+            else => TargetError.UnsupportedPlatformCombination,
         },
         else => blk: {
             _ = arch_str;
             _ = os_str;
-            break :blk error.UnsupportedArchitecture;
+            break :blk TargetError.UnsupportedArchitecture;
         },
     };
 }
 
-pub fn hostTargetKey() ![]const u8 {
+pub fn hostTargetKey() TargetError![]const u8 {
     return targetKey(builtin.target.cpu.arch, builtin.target.os.tag);
 }
 
@@ -187,7 +193,7 @@ pub fn fetchIndexJson(io: Io, allocator: Allocator, environ_map: ?*const Environ
         .response_writer = &body.writer,
     });
     if (res.status != .ok) {
-        return error.HttpRequestFailed;
+        return DownloadError.HttpRequestFailed;
     }
 
     return try body.toOwnedSlice();
@@ -203,19 +209,19 @@ pub fn findArtifact(
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{});
     defer parsed.deinit();
 
-    if (parsed.value != .object) return error.InvalidIndexFormat;
+    if (parsed.value != .object) return DownloadError.InvalidIndexFormat;
 
-    const release_val = parsed.value.object.get(version_key) orelse return error.VersionNotFound;
-    if (release_val != .object) return error.InvalidReleaseFormat;
+    const release_val = parsed.value.object.get(version_key) orelse return DownloadError.VersionNotFound;
+    if (release_val != .object) return DownloadError.InvalidReleaseFormat;
     const release_obj = release_val.object;
 
-    const target_val = release_obj.get(target_key) orelse return error.TargetNotAvailable;
-    if (target_val != .object) return error.InvalidTargetFormat;
+    const target_val = release_obj.get(target_key) orelse return DownloadError.TargetNotAvailable;
+    if (target_val != .object) return DownloadError.InvalidTargetFormat;
     const target_obj = target_val.object;
 
-    const tarball_val = target_obj.get("tarball") orelse return error.MissingTarballUrl;
-    const shasum_val = target_obj.get("shasum") orelse return error.MissingChecksum;
-    if (tarball_val != .string or shasum_val != .string) return error.InvalidArtifactFields;
+    const tarball_val = target_obj.get("tarball") orelse return DownloadError.MissingTarballUrl;
+    const shasum_val = target_obj.get("shasum") orelse return DownloadError.MissingChecksum;
+    if (tarball_val != .string or shasum_val != .string) return DownloadError.InvalidArtifactFields;
 
     const date_str = if (release_obj.get("date")) |d| (if (d == .string) d.string else "") else "";
     const resolved_str = if (release_obj.get("version")) |v| (if (v == .string) v.string else version_key) else version_key;
@@ -259,7 +265,7 @@ pub fn parseReleases(
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{});
     defer parsed.deinit();
 
-    if (parsed.value != .object) return error.InvalidIndexFormat;
+    if (parsed.value != .object) return DownloadError.InvalidIndexFormat;
 
     var list: std.ArrayList(ReleaseSummary) = .empty;
     errdefer {
@@ -305,8 +311,12 @@ pub fn freeReleases(allocator: Allocator, releases: []ReleaseSummary) void {
 }
 
 /// Computes the SHA-256 hex digest of a file and checks it against `expected_hex`.
-pub fn verifyFileSha256(io: Io, file_path: []const u8, expected_hex: []const u8) !void {
-    if (expected_hex.len != Sha256.digest_length * 2) return error.InvalidExpectedChecksum;
+pub fn verifyFileSha256(
+    io: Io,
+    file_path: []const u8,
+    expected_hex: []const u8,
+) (ChecksumError || Io.File.OpenError || Io.File.ReadPositionalError)!void {
+    if (expected_hex.len != Sha256.digest_length * 2) return ChecksumError.InvalidExpectedChecksum;
 
     const cwd = Io.Dir.cwd();
     var file = try cwd.openFile(io, file_path, .{});
@@ -328,7 +338,7 @@ pub fn verifyFileSha256(io: Io, file_path: []const u8, expected_hex: []const u8)
 
     const actual_hex = std.fmt.bytesToHex(digest, .lower);
     if (!std.ascii.eqlIgnoreCase(&actual_hex, expected_hex)) {
-        return error.ChecksumMismatch;
+        return ChecksumError.ChecksumMismatch;
     }
 }
 
@@ -425,9 +435,16 @@ fn downloadToFileInner(
     try prog_writer.interface.flush();
 
     if (res.status != .ok) {
-        return error.HttpRequestFailed;
+        return DownloadError.HttpRequestFailed;
     }
 }
+
+pub const ExtractError = ArchiveError ||
+    Allocator.Error ||
+    Io.Dir.OpenError ||
+    Io.Dir.CreateDirPathError ||
+    Io.Dir.RenameError ||
+    Io.File.OpenError;
 
 /// Extracts `archive_path` into `dest_dir_path`, stripping the single top-level archive folder.
 pub fn extractArchive(
@@ -435,7 +452,7 @@ pub fn extractArchive(
     allocator: Allocator,
     archive_path: []const u8,
     dest_dir_path: []const u8,
-) !void {
+) ExtractError!void {
     const format = try ArchiveFormat.fromFilename(archive_path);
     const cwd = Io.Dir.cwd();
 
@@ -459,25 +476,36 @@ pub fn extractArchive(
 
     switch (format) {
         .tar_xz => {
-            var xz = try std.compress.xz.Decompress.init(&file_reader.interface, allocator, &.{});
+            var xz = std.compress.xz.Decompress.init(&file_reader.interface, allocator, &.{}) catch {
+                return ArchiveError.DecompressionFailed;
+            };
             defer xz.deinit();
-            try std.tar.extract(io, stage_dir, &xz.reader, .{
+            std.tar.extract(io, stage_dir, &xz.reader, .{
                 .strip_components = 1,
                 .mode_mode = .executable_bit_only,
-            });
+            }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return ArchiveError.ExtractionFailed,
+            };
         },
         .tar_gz => {
             var flate_buf: [std.compress.flate.max_window_len]u8 = undefined;
             var gz: std.compress.flate.Decompress = .init(&file_reader.interface, .gzip, &flate_buf);
-            try std.tar.extract(io, stage_dir, &gz.reader, .{
+            std.tar.extract(io, stage_dir, &gz.reader, .{
                 .strip_components = 1,
                 .mode_mode = .executable_bit_only,
-            });
+            }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return ArchiveError.ExtractionFailed,
+            };
         },
         .zip => {
             var diag: std.zip.Diagnostics = .{ .allocator = allocator };
             defer diag.deinit();
-            try std.zip.extract(stage_dir, &file_reader, .{ .diagnostics = &diag });
+            std.zip.extract(stage_dir, &file_reader, .{ .diagnostics = &diag }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return ArchiveError.ExtractionFailed,
+            };
 
             if (diag.root_dir.len > 0) {
                 const nested_src = try std.fs.path.join(allocator, &.{ stage_path, diag.root_dir });
@@ -525,7 +553,7 @@ pub fn fetchMinisigOptional(
         .response_writer = &body.writer,
     });
     if (res.status == .not_found) return null;
-    if (res.status != .ok) return error.HttpRequestFailed;
+    if (res.status != .ok) return DownloadError.HttpRequestFailed;
 
     return try body.toOwnedSlice();
 }
@@ -633,14 +661,14 @@ test "targetKey mapping" {
     try std.testing.expectEqualStrings("x86_64-linux", try targetKey(.x86_64, .linux));
     try std.testing.expectEqualStrings("aarch64-macos", try targetKey(.aarch64, .macos));
     try std.testing.expectEqualStrings("x86_64-windows", try targetKey(.x86_64, .windows));
-    try std.testing.expectError(error.UnsupportedPlatformCombination, targetKey(.riscv64, .macos));
+    try std.testing.expectError(TargetError.UnsupportedPlatformCombination, targetKey(.riscv64, .macos));
 }
 
 test "ArchiveFormat detection" {
     try std.testing.expectEqual(ArchiveFormat.tar_xz, try ArchiveFormat.fromFilename("zig-x86_64-linux-0.17.0.tar.xz"));
     try std.testing.expectEqual(ArchiveFormat.tar_gz, try ArchiveFormat.fromFilename("zig.tar.gz"));
     try std.testing.expectEqual(ArchiveFormat.zip, try ArchiveFormat.fromFilename("zig-x86_64-windows-0.17.0.zip"));
-    try std.testing.expectError(error.UnsupportedArchiveFormat, ArchiveFormat.fromFilename("zig.tar.bz2"));
+    try std.testing.expectError(ArchiveError.UnsupportedArchiveFormat, ArchiveFormat.fromFilename("zig.tar.bz2"));
 }
 
 test "findArtifact and parseReleases from index json" {
@@ -680,8 +708,8 @@ test "findArtifact and parseReleases from index json" {
     defer rel_art.deinit(allocator);
     try std.testing.expectEqualStrings("0.17.0", rel_art.resolved_version);
 
-    try std.testing.expectError(error.VersionNotFound, findArtifact(allocator, sample_json, "0.15.0", "x86_64-linux"));
-    try std.testing.expectError(error.TargetNotAvailable, findArtifact(allocator, sample_json, "0.16.0", "x86_64-linux"));
+    try std.testing.expectError(DownloadError.VersionNotFound, findArtifact(allocator, sample_json, "0.15.0", "x86_64-linux"));
+    try std.testing.expectError(DownloadError.TargetNotAvailable, findArtifact(allocator, sample_json, "0.16.0", "x86_64-linux"));
 
     const releases = try parseReleases(allocator, sample_json, "x86_64-linux");
     defer freeReleases(allocator, releases);
@@ -715,7 +743,7 @@ test "verifyFileSha256 matches and catches mismatch" {
     try verifyFileSha256(io, tmp_path, &expected_hex);
 
     const bad_hex = "0000000000000000000000000000000000000000000000000000000000000000";
-    try std.testing.expectError(error.ChecksumMismatch, verifyFileSha256(io, tmp_path, bad_hex));
+    try std.testing.expectError(DownloadError.ChecksumMismatch, verifyFileSha256(io, tmp_path, bad_hex));
 }
 
 test "extractArchive unpacks real tar.xz and tar.gz stripping root directory" {

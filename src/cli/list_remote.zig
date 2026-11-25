@@ -4,7 +4,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "list-remote",
         .description = "List available releases from ziglang.org",

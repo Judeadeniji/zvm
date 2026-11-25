@@ -6,6 +6,10 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
+const errors = @import("errors.zig");
+
+const PathError = errors.PathError;
+pub const PathInitError = errors.PathInitError;
 
 pub const Paths = struct {
     allocator: Allocator,
@@ -30,10 +34,10 @@ pub const Paths = struct {
         os_tag: std.Target.Os.Tag,
         environ_map: ?*const EnvironMap,
         custom_base: ?[]const u8,
-    ) ![]u8 {
+    ) PathInitError![]u8 {
         if (custom_base) |b| return allocator.dupe(u8, b);
 
-        const env = environ_map orelse return error.EnvironmentHomeMissing;
+        const env = environ_map orelse return PathError.EnvironmentHomeMissing;
 
         if (getNonEmpty(env, "ZVM_PATH")) |zvm_path| {
             return allocator.dupe(u8, zvm_path);
@@ -47,7 +51,7 @@ pub const Paths = struct {
                 if (getNonEmpty(env, "USERPROFILE")) |profile| {
                     return std.fs.path.join(allocator, &.{ profile, ".zvm" });
                 }
-                return error.EnvironmentHomeMissing;
+                return PathError.EnvironmentHomeMissing;
             },
             .macos => {
                 if (getNonEmpty(env, "XDG_DATA_HOME")) |xdg| {
@@ -56,7 +60,7 @@ pub const Paths = struct {
                 if (getNonEmpty(env, "HOME")) |home| {
                     return std.fs.path.join(allocator, &.{ home, "Library", "Application Support", "zvm" });
                 }
-                return error.EnvironmentHomeMissing;
+                return PathError.EnvironmentHomeMissing;
             },
             else => {
                 if (getNonEmpty(env, "XDG_DATA_HOME")) |xdg| {
@@ -65,7 +69,7 @@ pub const Paths = struct {
                 if (getNonEmpty(env, "HOME")) |home| {
                     return std.fs.path.join(allocator, &.{ home, ".zvm" });
                 }
-                return error.EnvironmentHomeMissing;
+                return PathError.EnvironmentHomeMissing;
             },
         }
     }
@@ -78,7 +82,7 @@ pub const Paths = struct {
     }
 
     /// Initialize Paths using the host OS's configuration discovery rules.
-    pub fn init(allocator: Allocator, environ_map: ?*const EnvironMap, custom_base: ?[]const u8) !Paths {
+    pub fn init(allocator: Allocator, environ_map: ?*const EnvironMap, custom_base: ?[]const u8) PathInitError!Paths {
         const base = try resolveBaseDirForOs(allocator, builtin.target.os.tag, environ_map, custom_base);
         errdefer allocator.free(base);
 

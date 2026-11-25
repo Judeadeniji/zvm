@@ -8,6 +8,7 @@ const EnvironMap = std.process.Environ.Map;
 const Paths = @import("paths.zig").Paths;
 const resolver = @import("resolver.zig");
 const downloader = @import("downloader.zig");
+const ResolveError = @import("errors.zig").ResolveError;
 
 pub const Router = struct {
     paths: *const Paths,
@@ -125,7 +126,7 @@ pub const Router = struct {
 
         const target_version: []u8 = blk: {
             var resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
-                if (err == error.NoCompatibleVersionInstalled and auto_install) {
+                if (err == ResolveError.NoCompatibleVersionInstalled and auto_install) {
                     if (try resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir)) |min_ver| {
                         errdefer self.allocator.free(min_ver);
                         if (!self.autoInstallAndWait(min_ver)) std.process.exit(1);
@@ -133,10 +134,10 @@ pub const Router = struct {
                     }
                 }
                 switch (err) {
-                    error.NoCompatibleVersionInstalled => {
+                    ResolveError.NoCompatibleVersionInstalled => {
                         printStderr(self.io, "error: No installed Zig version satisfies project minimum requirement in build.zig.zon.\nhint: Run 'zvm list-remote' to check available releases, then 'zvm install <version>'.\n", .{});
                     },
-                    error.NoVersionConfigured => {
+                    ResolveError.NoVersionConfigured => {
                         printStderr(self.io, "error: No Zig version configured for current project or global default.\nhint: Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n", .{});
                     },
                     else => {

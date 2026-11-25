@@ -5,7 +5,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "setup",
         .aliases = &.{"shim"},
@@ -29,7 +29,7 @@ fn handle(ctx: zli.CommandContext) !void {
     defer ctx.allocator.free(self_exe);
 
     var res = zvm.shim.setupShim(app.paths, ctx.io, ctx.allocator, self_exe, force) catch |err| switch (err) {
-        error.ShimAlreadyExists => {
+        zvm.errors.ShimError.ShimAlreadyExists => {
             const shim_p = try app.paths.zigShimPath(ctx.allocator);
             defer ctx.allocator.free(shim_p);
             try ctx.writer.print("error: '{s}' already exists and does not point to this zvm binary.\n", .{shim_p});

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 
+pub const errors = @import("errors.zig");
 pub const paths = @import("paths.zig");
 pub const Paths = paths.Paths;
 
@@ -23,6 +24,7 @@ pub const shim = @import("shim.zig");
 pub const minisig = @import("minisig.zig");
 
 test {
+    _ = errors;
     _ = paths;
     _ = version;
     _ = resolver;

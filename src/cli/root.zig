@@ -25,7 +25,7 @@ fn showHelp(ctx: zli.CommandContext) !void {
 }
 
 /// Builds the full `zvm` CLI command tree.
-pub fn buildRootCommand(init_options: zli.InitOptions) !*zli.Command {
+pub fn buildRootCommand(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const root = try zli.Command.init(init_options, .{
         .name = "zvm",
         .description = "A fast, transparent Zig version manager written in Zig",
@@ -33,7 +33,7 @@ pub fn buildRootCommand(init_options: zli.InitOptions) !*zli.Command {
     }, showHelp);
     errdefer root.deinit();
 
-    const subcommands = [_]*const fn (zli.InitOptions) anyerror!*zli.Command{
+    const subcommands = [_]*const fn (zli.InitOptions) zli.CommandSetupErrors!*zli.Command{
         install_cmd.command,
         use_cmd.command,
         pin_cmd.command,

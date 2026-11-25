@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const zli = @import("zli");
+const zvm = @import("zvm");
 
 pub const Shell = enum {
     bash,
@@ -9,16 +10,16 @@ pub const Shell = enum {
     fish,
     powershell,
 
-    pub fn parse(raw: []const u8) !Shell {
+    pub fn parse(raw: []const u8) zvm.errors.CliError!Shell {
         if (std.ascii.eqlIgnoreCase(raw, "bash")) return .bash;
         if (std.ascii.eqlIgnoreCase(raw, "zsh")) return .zsh;
         if (std.ascii.eqlIgnoreCase(raw, "fish")) return .fish;
         if (std.ascii.eqlIgnoreCase(raw, "powershell") or std.ascii.eqlIgnoreCase(raw, "pwsh")) return .powershell;
-        return error.UnsupportedShell;
+        return zvm.errors.CliError.UnsupportedShell;
     }
 };
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "completions",
         .description = "Generate shell completions (bash, zsh, fish, powershell)",
@@ -41,11 +42,11 @@ pub fn render(writer: *std.Io.Writer, shell: Shell) !void {
     try writer.writeAll(script);
 }
 
-fn handle(ctx: zli.CommandContext) !void {
-    const raw_shell = ctx.getArg("shell") orelse return error.MissingShell;
+fn handle(ctx: zli.CommandContext) (zvm.errors.CliError || std.Io.Writer.Error)!void {
+    const raw_shell = ctx.getArg("shell") orelse return zvm.errors.CliError.MissingShell;
     const shell = Shell.parse(raw_shell) catch {
         try ctx.writer.print("error: Unsupported shell '{s}'. Expected bash, zsh, fish, or powershell.\n", .{raw_shell});
-        return error.UnsupportedShell;
+        return zvm.errors.CliError.UnsupportedShell;
     };
     try render(ctx.writer, shell);
 }
@@ -168,7 +169,7 @@ test "Shell.parse and render completions" {
     const allocator = std.testing.allocator;
     try std.testing.expectEqual(Shell.bash, try Shell.parse("bash"));
     try std.testing.expectEqual(Shell.powershell, try Shell.parse("pwsh"));
-    try std.testing.expectError(error.UnsupportedShell, Shell.parse("tcsh"));
+    try std.testing.expectError(zvm.errors.CliError.UnsupportedShell, Shell.parse("tcsh"));
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();

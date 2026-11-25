@@ -6,7 +6,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     return zli.Command.init(init_options, .{
         .name = "doctor",
         .description = "Check zvm directories, zig shim status, and PATH precedence",

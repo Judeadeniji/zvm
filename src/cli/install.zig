@@ -32,7 +32,7 @@ const SpinnerProgress = struct {
     }
 };
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "install",
         .description = "Download and install a Zig compiler version (e.g. 0.17.0, master)",
@@ -66,7 +66,7 @@ pub fn command(init_options: zli.InitOptions) !*zli.Command {
 
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
-    const raw_version = ctx.getArg("version") orelse return error.MissingVersion;
+    const raw_version = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
     const force = ctx.flag("force", bool);
     const no_minisig = ctx.flag("no-minisig", bool);
     const minisig_key_flag = ctx.flag("minisig-key", []const u8);
@@ -74,7 +74,7 @@ fn handle(ctx: zli.CommandContext) !void {
 
     const parsed = zvm.Version.parse(raw_version) catch {
         try ctx.writer.print("error: Invalid Zig version '{s}'.\n", .{raw_version});
-        return error.InvalidVersion;
+        return zvm.errors.CliError.InvalidVersion;
     };
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
@@ -103,11 +103,11 @@ fn handle(ctx: zli.CommandContext) !void {
         },
     ) catch |err| {
         switch (err) {
-            error.VersionNotFound => try ctx.spinner.fail("Zig version '{s}' was not found in release index.", .{canonical}),
-            error.TargetNotAvailable => try ctx.spinner.fail("No binary release for '{s}' on this platform.", .{canonical}),
-            error.ChecksumMismatch => try ctx.spinner.fail("SHA-256 checksum verification failed for '{s}'.", .{canonical}),
-            error.SignatureVerificationFailed, error.GlobalSignatureVerificationFailed, error.KeyIdMismatch => try ctx.spinner.fail("Minisig signature verification failed for '{s}'.", .{canonical}),
-            error.HttpRequestFailed => try ctx.spinner.fail("Failed to download Zig '{s}' from ziglang.org.", .{canonical}),
+            zvm.errors.DownloadError.VersionNotFound => try ctx.spinner.fail("Zig version '{s}' was not found in release index.", .{canonical}),
+            zvm.errors.DownloadError.TargetNotAvailable => try ctx.spinner.fail("No binary release for '{s}' on this platform.", .{canonical}),
+            zvm.errors.DownloadError.ChecksumMismatch => try ctx.spinner.fail("SHA-256 checksum verification failed for '{s}'.", .{canonical}),
+            zvm.errors.MinisigError.SignatureVerificationFailed, zvm.errors.MinisigError.GlobalSignatureVerificationFailed, zvm.errors.MinisigError.KeyIdMismatch => try ctx.spinner.fail("Minisig signature verification failed for '{s}'.", .{canonical}),
+            zvm.errors.DownloadError.HttpRequestFailed => try ctx.spinner.fail("Failed to download Zig '{s}' from ziglang.org.", .{canonical}),
             else => try ctx.spinner.fail("Failed to install Zig '{s}': {s}", .{ canonical, @errorName(err) }),
         }
         return err;

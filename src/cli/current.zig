@@ -4,7 +4,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 
-pub fn command(init_options: zli.InitOptions) !*zli.Command {
+pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     return zli.Command.init(init_options, .{
         .name = "current",
         .description = "Show the currently active Zig version for the current directory",
@@ -24,14 +24,14 @@ fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
 
     var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch |err| switch (err) {
-        error.NoVersionConfigured => {
+        zvm.errors.ResolveError.NoVersionConfigured => {
             try ctx.writer.writeAll("No Zig version configured.\n");
             try ctx.writer.writeAll("hint: Run 'zvm use <version>' or 'zvm pin <version>'.\n");
             return;
         },
-        error.NoCompatibleVersionInstalled => {
+        zvm.errors.ResolveError.NoCompatibleVersionInstalled => {
             try ctx.writer.writeAll("error: No installed Zig version satisfies minimum_zig_version in build.zig.zon.\n");
-            return error.NoCompatibleVersionInstalled;
+            return zvm.errors.ResolveError.NoCompatibleVersionInstalled;
         },
         else => return err,
     };

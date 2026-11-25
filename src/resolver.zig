@@ -5,10 +5,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
+const errors = @import("errors.zig");
 const Paths = @import("paths.zig").Paths;
 const version_mod = @import("version.zig");
 const Version = version_mod.Version;
 const Constraint = version_mod.Constraint;
+
+pub const ResolveError = errors.ResolveError;
 
 pub const ResolutionSource = enum {
     env_var,
@@ -27,13 +30,6 @@ pub const ResolvedVersion = struct {
         if (self.source_path) |p| allocator.free(p);
     }
 };
-
-pub const ResolveError = error{
-    NoCompatibleVersionInstalled,
-    NoVersionConfigured,
-    EnvironmentHomeMissing,
-    OutOfMemory,
-} || Io.Dir.OpenError || Io.Dir.ReadFileError || Io.Dir.AccessError;
 
 /// Parse the `.minimum_zig_version` string from a `build.zig.zon` buffer.
 pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
@@ -132,7 +128,7 @@ pub fn resolve(
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
     start_dir: []const u8,
-) !ResolvedVersion {
+) ResolveError!ResolvedVersion {
     // 1. Environment variable override
     if (environ_map) |env| {
         if (env.get("ZIG_VERSION")) |zig_env| {
@@ -178,7 +174,7 @@ pub fn resolve(
                             .source_path = try allocator.dupe(u8, zig_version_path),
                         };
                     }
-                    return error.NoCompatibleVersionInstalled;
+                    return ResolveError.NoCompatibleVersionInstalled;
                 }
                 return .{
                     .version = try allocator.dupe(u8, trimmed),
@@ -204,7 +200,7 @@ pub fn resolve(
                             .source_path = try allocator.dupe(u8, zon_path),
                         };
                     } else {
-                        return error.NoCompatibleVersionInstalled;
+                        return ResolveError.NoCompatibleVersionInstalled;
                     }
                 }
             }
@@ -230,7 +226,7 @@ pub fn resolve(
         };
     }
 
-    return error.NoVersionConfigured;
+    return ResolveError.NoVersionConfigured;
 }
 
 test "parseMinimumZigVersionFromZon" {
