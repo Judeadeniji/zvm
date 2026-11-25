@@ -46,7 +46,7 @@ This document outlines the development phases, architecture milestones, and plan
 - [x] **Archive Extraction** (`src/downloader.zig`)
   - [x] Unpack `.tar.xz`, `.tar.gz`, or `.zip` directly into `~/.zvm/versions/<version>/` (via staging directory).
   - [x] Set appropriate executable permissions on extracted binaries (`executable_bit_only`).
-  - [x] Add verification tests against real `.tar.xz` and `.tar.gz` archives (`.zip` test pending).
+  - [x] Add verification tests against real `.tar.xz`, `.tar.gz`, and `.zip` archives.
 - [x] **Master / Nightly Handling**
   - [x] Track resolved `master` commit/dev version strings (`.zvm-version`) for `zvm install master` update checks.
 
