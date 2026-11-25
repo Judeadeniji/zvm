@@ -1,3 +1,6 @@
+//! Manages ZVM's directory layout (`versions/`, `bin/`, `cache/`, `default`),
+//! environment overrides (`ZVM_PATH`, `XDG_DATA_HOME`), and installed version metadata.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;

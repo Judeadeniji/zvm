@@ -1,3 +1,6 @@
+//! Release discovery, streaming HTTP download, SHA-256 verification, and
+//! archive extraction (`.tar.xz`, `.tar.gz`, `.zip`) for official Zig builds.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;

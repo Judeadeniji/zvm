@@ -1,3 +1,5 @@
+//! `zvm pin` subcommand for writing a `.zig-version` file in the current project.
+
 const std = @import("std");
 const Io = std.Io;
 const zli = @import("zli");

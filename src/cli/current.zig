@@ -1,3 +1,5 @@
+//! `zvm current` subcommand for reporting the active Zig version and its resolution source.
+
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;

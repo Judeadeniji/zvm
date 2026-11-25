@@ -1,3 +1,5 @@
+//! CLI command tree assembly and top-level dispatch between `zig` shim routing and `zvm`.
+
 const std = @import("std");
 const Io = std.Io;
 const zli = @import("zli");
@@ -65,6 +67,7 @@ pub fn run(init: std.process.Init) !u8 {
     defer gpa.free(cwd);
 
     const args = try init.minimal.args.toSlice(arena);
+    // Short-circuit before building the `zli` tree so shim invocations have minimal startup overhead.
     if (args.len > 0 and zvm.Router.isZigShim(args[0])) {
         const router = zvm.Router.init(&paths, io, gpa, init.environ_map);
         try router.routeAndExec(cwd, args[1..]);

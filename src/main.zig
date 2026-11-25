@@ -1,3 +1,5 @@
+//! Binary entrypoint for `zvm` (and the `zig` shim symlink).
+
 const std = @import("std");
 const cli = @import("cli/root.zig");
 

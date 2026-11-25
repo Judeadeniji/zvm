@@ -1,3 +1,5 @@
+//! `zvm list` subcommand for listing locally installed Zig versions.
+
 const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");

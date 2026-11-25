@@ -1,3 +1,5 @@
+//! Semantic version representation, ordering, and constraint matching (`>=`, `^`, `~`, `master`).
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const SemanticVersion = std.SemanticVersion;

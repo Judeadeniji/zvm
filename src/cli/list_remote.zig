@@ -1,3 +1,5 @@
+//! `zvm list-remote` subcommand for listing upstream releases from ziglang.org.
+
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;

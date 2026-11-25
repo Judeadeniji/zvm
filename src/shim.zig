@@ -1,3 +1,6 @@
+//! Manages creation and inspection of the `zig` shim binary/symlink in `bin/`
+//! and diagnoses `PATH` precedence against system Zig installations.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -149,6 +152,7 @@ pub fn setupShim(
 fn writeShim(io: Io, shim_path: []const u8, target_path: []const u8, outcome: SetupOutcome) !SetupResult {
     const cwd = Io.Dir.cwd();
     if (Paths.is_windows) {
+        // Symlinks on Windows require Developer Mode or admin rights; copy instead.
         try Io.Dir.copyFile(cwd, target_path, cwd, shim_path, io, .{});
     } else {
         try cwd.symLinkAtomic(io, target_path, shim_path, .{});

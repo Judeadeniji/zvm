@@ -1,3 +1,5 @@
+//! `zvm use` subcommand for switching the global default Zig version.
+
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;

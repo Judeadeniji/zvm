@@ -1,3 +1,5 @@
+//! `zvm uninstall` subcommand for deleting an installed Zig version directory.
+
 const std = @import("std");
 const Io = std.Io;
 const zli = @import("zli");

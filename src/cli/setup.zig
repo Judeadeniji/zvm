@@ -1,3 +1,5 @@
+//! `zvm setup` (`zvm shim`) subcommand for installing the `zig` shim and checking `PATH`.
+
 const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");

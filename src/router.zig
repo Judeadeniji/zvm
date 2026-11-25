@@ -1,3 +1,6 @@
+//! Transparent `zig` shim router that resolves the target compiler version and
+//! replaces the current process image with all arguments and environment forwarded.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -22,6 +25,7 @@ pub const Router = struct {
 
     /// Determines whether the program was invoked as the `zig` command shim (e.g. `zig build`, `zig test`).
     pub fn isZigShim(argv0: []const u8) bool {
+        // Handle both `/` and `\` regardless of host OS so path checks are uniform.
         const last_slash = std.mem.lastIndexOfAny(u8, argv0, "/\\");
         const base = if (last_slash) |idx| argv0[idx + 1 ..] else argv0;
         return std.mem.eql(u8, base, "zig") or std.mem.eql(u8, base, "zig.exe");

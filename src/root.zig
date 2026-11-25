@@ -1,3 +1,6 @@
+//! Core library module for `zvm`, exposing path management, version parsing,
+//! project resolution, transparent process routing, shim diagnostics, and downloading.
+
 const std = @import("std");
 
 pub const paths = @import("paths.zig");

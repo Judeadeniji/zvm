@@ -1,3 +1,6 @@
+//! Context-aware version resolution traversing `ZIG_VERSION`, ancestor `.zig-version`
+//! and `build.zig.zon` files, and the global default configuration.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;

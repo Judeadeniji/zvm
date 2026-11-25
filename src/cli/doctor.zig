@@ -1,3 +1,5 @@
+//! `zvm doctor` subcommand for diagnosing ZVM directories, shim health, and `PATH` precedence.
+
 const std = @import("std");
 const Io = std.Io;
 const zli = @import("zli");

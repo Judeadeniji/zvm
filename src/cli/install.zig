@@ -1,3 +1,5 @@
+//! `zvm install` subcommand for downloading, verifying, and installing Zig releases.
+
 const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");

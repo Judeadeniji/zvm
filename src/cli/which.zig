@@ -1,3 +1,5 @@
+//! `zvm which` subcommand for printing the binary path of the active or specified Zig version.
+
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
