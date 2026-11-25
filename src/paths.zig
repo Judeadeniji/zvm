@@ -107,6 +107,42 @@ pub const Paths = struct {
         return try allocator.dupe(u8, trimmed);
     }
 
+    /// Returns path to the `zig` shim inside `~/.zvm/bin/`.
+    pub fn zigShimPath(self: *const Paths, allocator: Allocator) ![]u8 {
+        return std.fs.path.join(allocator, &.{ self.bin_dir, zig_exe_name });
+    }
+
+    /// Returns a list of installed version names found in `versions_dir`.
+    /// Caller owns the returned slice and each string (free with `freeInstalledVersions`).
+    pub fn listInstalledVersions(self: *const Paths, io: Io, allocator: Allocator) ![][]u8 {
+        const cwd = Io.Dir.cwd();
+        var v_dir = cwd.openDir(io, self.versions_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return try allocator.alloc([]u8, 0),
+            else => return err,
+        };
+        defer v_dir.close(io);
+
+        var list: std.ArrayList([]u8) = .empty;
+        errdefer {
+            for (list.items) |item| allocator.free(item);
+            list.deinit(allocator);
+        }
+
+        var it = v_dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (self.isVersionInstalled(io, allocator, entry.name)) {
+                try list.append(allocator, try allocator.dupe(u8, entry.name));
+            }
+        }
+
+        return try list.toOwnedSlice(allocator);
+    }
+
+    pub fn freeInstalledVersions(allocator: Allocator, versions: [][]u8) void {
+        for (versions) |v| allocator.free(v);
+        allocator.free(versions);
+    }
+
     /// Sets the global default version by writing to ~/.zvm/default.
     pub fn writeDefaultVersion(self: *const Paths, io: Io, version: []const u8) !void {
         try self.ensureDirs(io);

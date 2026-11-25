@@ -15,6 +15,7 @@ pub const router = @import("router.zig");
 pub const Router = router.Router;
 
 pub const downloader = @import("downloader.zig");
+pub const shim = @import("shim.zig");
 
 test {
     _ = paths;
@@ -22,4 +23,5 @@ test {
     _ = resolver;
     _ = router;
     _ = downloader;
+    _ = shim;
 }
