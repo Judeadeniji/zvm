@@ -4,6 +4,7 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const report = @import("report.zig");
 const Shell = @import("completions.zig").Shell;
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
@@ -75,14 +76,19 @@ pub fn render(writer: *std.Io.Writer, shell: Shell, bin_dir: []const u8, auto_in
     }
 }
 
-fn handle(ctx: zli.CommandContext) (zvm.errors.CliError || std.Io.Writer.Error)!void {
+fn handle(ctx: zli.CommandContext) (zvm.errors.CliError || std.Io.Writer.Error || report.Reported)!void {
     const app = ctx.getContextData(AppContext);
-    const raw_shell = ctx.getArg("shell") orelse return zvm.errors.CliError.MissingShell;
+    const raw_shell = ctx.getArg("shell") orelse {
+        try app.reporter.fail("A shell name is required.\n", .{});
+        try app.reporter.hint("Expected bash, zsh, fish, or powershell.\n", .{});
+        return error.Reported;
+    };
     const auto_install = ctx.flag("auto-install", bool);
 
     const shell = Shell.parse(raw_shell) catch {
-        try ctx.writer.print("error: Unsupported shell '{s}'. Expected bash, zsh, fish, or powershell.\n", .{raw_shell});
-        return zvm.errors.CliError.UnsupportedShell;
+        try app.reporter.fail("Unsupported shell '{s}'.\n", .{raw_shell});
+        try app.reporter.hint("Expected bash, zsh, fish, or powershell.\n", .{});
+        return error.Reported;
     };
 
     try render(ctx.writer, shell, app.paths.bin_dir, auto_install);

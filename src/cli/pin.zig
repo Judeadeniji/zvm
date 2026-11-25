@@ -5,6 +5,7 @@ const Io = std.Io;
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const report = @import("report.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -23,7 +24,8 @@ const PinError = zvm.errors.CliError ||
     std.mem.Allocator.Error ||
     std.Io.Writer.Error ||
     std.Io.Dir.OpenError ||
-    std.Io.Dir.WriteFileError;
+    std.Io.Dir.WriteFileError ||
+    report.Reported;
 
 fn handle(ctx: zli.CommandContext) PinError!void {
     const app = ctx.getContextData(AppContext);
@@ -31,8 +33,9 @@ fn handle(ctx: zli.CommandContext) PinError!void {
     const trimmed = std.mem.trim(u8, raw_input, " \t\r\n");
 
     const constraint = zvm.Constraint.parse(trimmed) catch {
-        try ctx.writer.print("error: Invalid Zig version or constraint '{s}'.\n", .{trimmed});
-        return zvm.errors.CliError.InvalidVersion;
+        try app.reporter.fail("Invalid Zig version or constraint '{s}'.\n", .{trimmed});
+        try app.reporter.hint("Examples: '0.17.0', '^0.17.0', '>=0.16.0', or 'master'.\n", .{});
+        return error.Reported;
     };
 
     const pinned_text = if (constraint.exactPin()) |exact|
@@ -52,19 +55,19 @@ fn handle(ctx: zli.CommandContext) PinError!void {
         .data = payload,
     });
 
-    try ctx.writer.print("Pinned {s} to {s}.\n", .{ file_path, pinned_text });
+    try app.reporter.success("Pinned {s} to {s}.\n", .{ file_path, pinned_text });
 
     if (constraint.exactPin() != null) {
         if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, pinned_text)) {
-            try ctx.writer.print("note: Zig version '{s}' is not installed yet. Run 'zvm install {s}' to install it.\n", .{ pinned_text, pinned_text });
+            try app.reporter.note("Zig version '{s}' is not installed yet. Run 'zvm install {s}' to install it.\n", .{ pinned_text, pinned_text });
         }
     } else {
         const matched = try zvm.resolver.findHighestMatchingInstalled(app.paths, ctx.io, ctx.allocator, constraint);
         defer if (matched) |m| ctx.allocator.free(m);
         if (matched) |m| {
-            try ctx.writer.print("Resolved locally installed version matching '{s}': {s}\n", .{ pinned_text, m });
+            try app.reporter.info("Resolved locally installed version matching '{s}': {s}\n", .{ pinned_text, m });
         } else {
-            try ctx.writer.print("note: No locally installed Zig version satisfies '{s}'.\n", .{pinned_text});
+            try app.reporter.note("No locally installed Zig version satisfies '{s}'.\n", .{pinned_text});
         }
     }
 }

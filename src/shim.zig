@@ -280,6 +280,53 @@ test "setupShim creates, detects, and updates symlink" {
     try std.testing.expectEqual(SetupOutcome.already_configured, res2.outcome);
 }
 
+test "inspectShim without an expected executable accepts any zvm target" {
+    if (Paths.is_windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+
+    const fake_zvm = try std.fs.path.join(allocator, &.{ tmp_path, "zvm" });
+    defer allocator.free(fake_zvm);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake_zvm, .data = "fake-zvm" });
+
+    var setup = try setupShim(&paths, io, allocator, fake_zvm, false);
+    defer setup.deinit(allocator);
+
+    // A shim pointing at any executable named `zvm` is healthy, even when it is
+    // not the exact binary running `zvm doctor`.
+    var valid = try inspectShim(&paths, io, allocator, null);
+    defer valid.deinit(allocator);
+    switch (valid) {
+        .valid => |target| try std.testing.expectEqualStrings(fake_zvm, target),
+        else => return error.TestUnexpectedResult,
+    }
+
+    // A symlink to something that is not a zvm executable is still suspicious.
+    const fake_other = try std.fs.path.join(allocator, &.{ tmp_path, "other" });
+    defer allocator.free(fake_other);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake_other, .data = "not-zvm" });
+
+    var replaced = try setupShim(&paths, io, allocator, fake_other, true);
+    defer replaced.deinit(allocator);
+
+    var wrong = try inspectShim(&paths, io, allocator, null);
+    defer wrong.deinit(allocator);
+    switch (wrong) {
+        .wrong_target => |target| try std.testing.expectEqualStrings(fake_other, target),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "checkPathOrder detects precedence and shadowing" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

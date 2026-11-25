@@ -68,6 +68,7 @@ zvm completions <bash|zsh|fish|powershell>
 - **Base Directory**: `ZVM_PATH` overrides the data directory. Otherwise ZVM uses `$XDG_DATA_HOME/zvm` (fallback `$HOME/.zvm`) on Linux, `$XDG_DATA_HOME/zvm` (fallback `$HOME/Library/Application Support/zvm`) on macOS, and `%LOCALAPPDATA%\zvm` (fallback `%USERPROFILE%\.zvm`) on Windows.
 - **Auto-Install**: Set `ZVM_AUTO_INSTALL=1` (or create `<base_dir>/auto-install`) to automatically download and install missing project versions when `zig` is invoked.
 - **Minisign Public Key**: Override the built-in ZSF public key at compile time via `-Dminisig-key=...` or at runtime via `--minisig-key`, `ZVM_MINISIG_PUBLIC_KEY`, or `<base_dir>/minisig.pub`.
+- **Colored Output**: Colors are used only when the target stream is a terminal. Override detection with `ZVM_COLOR=always` or `ZVM_COLOR=never`; `NO_COLOR`, `CLICOLOR=0`, `CLICOLOR_FORCE=1`, and `TERM=dumb` are also honored.
 
 ## Building from Source
 

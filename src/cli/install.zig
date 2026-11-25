@@ -73,8 +73,9 @@ fn handle(ctx: zli.CommandContext) !void {
     const minisig_override: ?[]const u8 = if (minisig_key_flag.len > 0) minisig_key_flag else null;
 
     const parsed = zvm.Version.parse(raw_version) catch {
-        try ctx.writer.print("error: Invalid Zig version '{s}'.\n", .{raw_version});
-        return zvm.errors.CliError.InvalidVersion;
+        try app.reporter.fail("Invalid Zig version '{s}'.\n", .{raw_version});
+        try app.reporter.hint("Use a version such as '0.17.0' or 'master'.\n", .{});
+        return error.Reported;
     };
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
@@ -102,15 +103,31 @@ fn handle(ctx: zli.CommandContext) !void {
             },
         },
     ) catch |err| {
+        ctx.spinner.stop();
         switch (err) {
-            zvm.errors.DownloadError.VersionNotFound => try ctx.spinner.fail("Zig version '{s}' was not found in release index.", .{canonical}),
-            zvm.errors.DownloadError.TargetNotAvailable => try ctx.spinner.fail("No binary release for '{s}' on this platform.", .{canonical}),
-            zvm.errors.DownloadError.ChecksumMismatch => try ctx.spinner.fail("SHA-256 checksum verification failed for '{s}'.", .{canonical}),
-            zvm.errors.MinisigError.SignatureVerificationFailed, zvm.errors.MinisigError.GlobalSignatureVerificationFailed, zvm.errors.MinisigError.KeyIdMismatch => try ctx.spinner.fail("Minisig signature verification failed for '{s}'.", .{canonical}),
-            zvm.errors.DownloadError.HttpRequestFailed => try ctx.spinner.fail("Failed to download Zig '{s}' from ziglang.org.", .{canonical}),
-            else => try ctx.spinner.fail("Failed to install Zig '{s}': {s}", .{ canonical, @errorName(err) }),
+            zvm.errors.DownloadError.VersionNotFound => {
+                try app.reporter.fail("Zig version '{s}' was not found in the release index.\n", .{canonical});
+                try app.reporter.hint("Run 'zvm list-remote' to see available versions.\n", .{});
+            },
+            zvm.errors.DownloadError.TargetNotAvailable => {
+                try app.reporter.fail("No binary release for Zig '{s}' is available on this platform.\n", .{canonical});
+                try app.reporter.hint("Run 'zvm list-remote --all' to see every published release.\n", .{});
+            },
+            zvm.errors.DownloadError.ChecksumMismatch, zvm.errors.DownloadError.InvalidExpectedChecksum => {
+                try app.reporter.fail("SHA-256 checksum verification failed for Zig '{s}'.\n", .{canonical});
+                try app.reporter.hint("Try again, or clear the cache with 'zvm clean' first.\n", .{});
+            },
+            zvm.errors.MinisigError.SignatureVerificationFailed, zvm.errors.MinisigError.GlobalSignatureVerificationFailed, zvm.errors.MinisigError.KeyIdMismatch => {
+                try app.reporter.fail("Minisig signature verification failed for Zig '{s}'.\n", .{canonical});
+                try app.reporter.hint("The download may be corrupted or tampered with. Try again.\n", .{});
+            },
+            zvm.errors.DownloadError.HttpRequestFailed => {
+                try app.reporter.fail("Failed to download Zig '{s}' from ziglang.org.\n", .{canonical});
+                try app.reporter.hint("Check your network connection and try again.\n", .{});
+            },
+            else => try app.reporter.reportError(err),
         }
-        return err;
+        return error.Reported;
     };
     defer res.deinit(ctx.allocator);
 

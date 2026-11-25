@@ -1,5 +1,41 @@
 const std = @import("std");
 
+/// Reads the package version from `build.zig.zon` so the CLI version never
+/// drifts from the package manifest.
+fn packageVersion(b: *std.Build) std.SemanticVersion {
+    var arena_state = std.heap.ArenaAllocator.init(b.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const zon_path = b.root.joinString(b.allocator, "build.zig.zon") catch @panic("out of memory");
+    defer b.allocator.free(zon_path);
+
+    const zon_bytes = std.Io.Dir.cwd().readFileAllocOptions(
+        b.graph.io,
+        zon_path,
+        arena,
+        .limited(1024 * 1024),
+        .of(u8),
+        0,
+    ) catch |err| std.debug.panic("failed to read {s}: {t}", .{ zon_path, err });
+
+    const Package = struct { version: []const u8 };
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const package = std.zon.parse.fromSlice(Package, .{
+        .gpa = b.allocator,
+        .arena = arena,
+        .source = zon_bytes,
+        .diagnostics = &diagnostics,
+        .ignore_unknown_fields = true,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => @panic("out of memory"),
+        error.ParseZon => diagnostics.fatal(zon_path),
+    };
+
+    return std.SemanticVersion.parse(package.version) catch |err|
+        std.debug.panic("invalid package version '{s}' in {s}: {t}", .{ package.version, zon_path, err });
+}
+
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
@@ -36,6 +72,7 @@ pub fn build(b: *std.Build) void {
 
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "minisig_public_key", minisig_key);
+    build_options.addOption(std.SemanticVersion, "version", packageVersion(b));
     const options_mod = build_options.createModule();
 
     const zli_dep = b.dependency("zli", .{
@@ -62,6 +99,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "zvm", .module = mod },
                 .{ .name = "zli", .module = zli_mod },
+                .{ .name = "build_options", .module = options_mod },
             },
         }),
     });

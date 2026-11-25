@@ -57,18 +57,18 @@ fn handle(ctx: zli.CommandContext) !void {
 
     const summary = try cleanCacheDir(ctx.io, app.paths.cache_dir, dry_run);
     if (summary.files_removed == 0) {
-        try ctx.writer.writeAll("Cache is already empty.\n");
+        try app.reporter.note("Cache is already empty.\n", .{});
         return;
     }
 
     const mb = @as(f64, @floatFromInt(summary.bytes_freed)) / (1024.0 * 1024.0);
     if (dry_run) {
-        try ctx.writer.print("Would remove {d} cached item(s) ({d:.2} MB).\n", .{
+        try app.reporter.info("Would remove {d} cached item(s) ({d:.2} MB).\n", .{
             summary.files_removed,
             mb,
         });
     } else {
-        try ctx.writer.print("Removed {d} cached item(s) ({d:.2} MB freed).\n", .{
+        try app.reporter.success("Removed {d} cached item(s) ({d:.2} MB freed).\n", .{
             summary.files_removed,
             mb,
         });
