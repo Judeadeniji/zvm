@@ -8,11 +8,11 @@ This document outlines the development phases, architecture milestones, and plan
 
 - [x] **Data Model & Directory Layout** (`src/paths.zig`)
   - [x] Define directory structure (`~/.zvm/versions/`, `~/.zvm/bin/`, `~/.zvm/cache/`, `~/.zvm/default`) and `ZVM_PATH` override.
-  - [ ] Implement platform-aware configuration directory discovery (`XDG_DATA_HOME` on Linux, `~/Library/Application Support` on macOS, `%LOCALAPPDATA%` on Windows).
+  - [x] Implement platform-aware configuration directory discovery (`XDG_DATA_HOME` on Linux, `~/Library/Application Support` on macOS, `%LOCALAPPDATA%` on Windows).
 - [x] **Semver & Version Representation** (`src/version.zig`)
   - [x] Parse semver strings (`X.Y.Z`, pre-releases, and `master` / `nightly`).
   - [x] Implement version ordering and `minimum_zig_version` satisfaction checks.
-  - [ ] Implement full semver constraint expressions (`>=`, `^`, `~`) for `.zig-version`.
+  - [x] Implement full semver constraint expressions (`>=`, `^`, `~`, compound ranges) for `.zig-version`.
 - [x] **Project Context & Walk-up Resolver** (`src/resolver.zig`)
   - [x] Walk parent directories to discover `.zig-version`.
   - [x] Parse `build.zig.zon` and extract `minimum_zig_version`.

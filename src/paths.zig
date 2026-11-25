@@ -15,23 +15,68 @@ pub const Paths = struct {
     pub const is_windows = builtin.target.os.tag == .windows;
     pub const zig_exe_name = if (is_windows) "zig.exe" else "zig";
 
-    /// Initialize Paths.
-    /// - If `custom_base` is given, it will be used as the base directory.
-    /// - Else if `environ_map` contains "ZVM_PATH", that will be used.
-    /// - Else if `environ_map` contains "HOME" (or "USERPROFILE" on Windows), `<HOME>/.zvm` is used.
+    /// Resolves the zvm base directory for a given OS tag using environment overrides:
+    /// 1. `custom_base` (if provided)
+    /// 2. `ZVM_PATH`
+    /// 3. Platform default:
+    ///    - Windows: `%LOCALAPPDATA%/zvm` (fallback: `%USERPROFILE%/.zvm`)
+    ///    - macOS: `$XDG_DATA_HOME/zvm` (fallback: `$HOME/Library/Application Support/zvm`)
+    ///    - Linux/other POSIX: `$XDG_DATA_HOME/zvm` (fallback: `$HOME/.zvm`)
+    pub fn resolveBaseDirForOs(
+        allocator: Allocator,
+        os_tag: std.Target.Os.Tag,
+        environ_map: ?*const EnvironMap,
+        custom_base: ?[]const u8,
+    ) ![]u8 {
+        if (custom_base) |b| return allocator.dupe(u8, b);
+
+        const env = environ_map orelse return error.EnvironmentHomeMissing;
+
+        if (getNonEmpty(env, "ZVM_PATH")) |zvm_path| {
+            return allocator.dupe(u8, zvm_path);
+        }
+
+        switch (os_tag) {
+            .windows => {
+                if (getNonEmpty(env, "LOCALAPPDATA")) |local_app_data| {
+                    return std.fs.path.join(allocator, &.{ local_app_data, "zvm" });
+                }
+                if (getNonEmpty(env, "USERPROFILE")) |profile| {
+                    return std.fs.path.join(allocator, &.{ profile, ".zvm" });
+                }
+                return error.EnvironmentHomeMissing;
+            },
+            .macos => {
+                if (getNonEmpty(env, "XDG_DATA_HOME")) |xdg| {
+                    return std.fs.path.join(allocator, &.{ xdg, "zvm" });
+                }
+                if (getNonEmpty(env, "HOME")) |home| {
+                    return std.fs.path.join(allocator, &.{ home, "Library", "Application Support", "zvm" });
+                }
+                return error.EnvironmentHomeMissing;
+            },
+            else => {
+                if (getNonEmpty(env, "XDG_DATA_HOME")) |xdg| {
+                    return std.fs.path.join(allocator, &.{ xdg, "zvm" });
+                }
+                if (getNonEmpty(env, "HOME")) |home| {
+                    return std.fs.path.join(allocator, &.{ home, ".zvm" });
+                }
+                return error.EnvironmentHomeMissing;
+            },
+        }
+    }
+
+    fn getNonEmpty(env: *const EnvironMap, key: []const u8) ?[]const u8 {
+        const val = env.get(key) orelse return null;
+        const trimmed = std.mem.trim(u8, val, " \t\r\n");
+        if (trimmed.len == 0) return null;
+        return trimmed;
+    }
+
+    /// Initialize Paths using the host OS's configuration discovery rules.
     pub fn init(allocator: Allocator, environ_map: ?*const EnvironMap, custom_base: ?[]const u8) !Paths {
-        const base = if (custom_base) |b|
-            try allocator.dupe(u8, b)
-        else if (environ_map != null and environ_map.?.get("ZVM_PATH") != null)
-            try allocator.dupe(u8, environ_map.?.get("ZVM_PATH").?)
-        else blk: {
-            const home_key = if (is_windows) "USERPROFILE" else "HOME";
-            const home_val = if (environ_map) |m| m.get(home_key) else null;
-            if (home_val) |home| {
-                break :blk try std.fs.path.join(allocator, &.{ home, ".zvm" });
-            }
-            return error.EnvironmentHomeMissing;
-        };
+        const base = try resolveBaseDirForOs(allocator, builtin.target.os.tag, environ_map, custom_base);
         errdefer allocator.free(base);
 
         const versions = try std.fs.path.join(allocator, &.{ base, "versions" });
@@ -231,4 +276,45 @@ test "Paths read and write default version" {
     try std.testing.expect(read_back != null);
     defer allocator.free(read_back.?);
     try std.testing.expectEqualStrings("0.17.0", read_back.?);
+}
+
+test "resolveBaseDirForOs platform discovery" {
+    const allocator = std.testing.allocator;
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("HOME", "/home/alice");
+    try env.put("USERPROFILE", "C:/Users/alice");
+
+    // Linux fallback to ~/.zvm when XDG_DATA_HOME unset
+    const linux_default = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
+    defer allocator.free(linux_default);
+    try std.testing.expectEqualStrings("/home/alice/.zvm", linux_default);
+
+    // macOS Application Support
+    const mac_default = try Paths.resolveBaseDirForOs(allocator, .macos, &env, null);
+    defer allocator.free(mac_default);
+    try std.testing.expectEqualStrings("/home/alice/Library/Application Support/zvm", mac_default);
+
+    // Windows USERPROFILE fallback then LOCALAPPDATA
+    const win_fallback = try Paths.resolveBaseDirForOs(allocator, .windows, &env, null);
+    defer allocator.free(win_fallback);
+    try std.testing.expectEqualStrings("C:/Users/alice/.zvm", win_fallback);
+
+    try env.put("LOCALAPPDATA", "C:/Users/alice/AppData/Local");
+    const win_local = try Paths.resolveBaseDirForOs(allocator, .windows, &env, null);
+    defer allocator.free(win_local);
+    try std.testing.expectEqualStrings("C:/Users/alice/AppData/Local/zvm", win_local);
+
+    // XDG_DATA_HOME overrides Linux and macOS
+    try env.put("XDG_DATA_HOME", "/home/alice/.local/share");
+    const linux_xdg = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
+    defer allocator.free(linux_xdg);
+    try std.testing.expectEqualStrings("/home/alice/.local/share/zvm", linux_xdg);
+
+    // ZVM_PATH overrides everything except custom_base
+    try env.put("ZVM_PATH", "/opt/zvm");
+    const zvm_override = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
+    defer allocator.free(zvm_override);
+    try std.testing.expectEqualStrings("/opt/zvm", zvm_override);
 }

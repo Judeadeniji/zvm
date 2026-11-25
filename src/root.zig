@@ -5,6 +5,7 @@ pub const Paths = paths.Paths;
 
 pub const version = @import("version.zig");
 pub const Version = version.Version;
+pub const Constraint = version.Constraint;
 
 pub const resolver = @import("resolver.zig");
 pub const resolve = resolver.resolve;

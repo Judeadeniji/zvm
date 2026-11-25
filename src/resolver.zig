@@ -3,7 +3,9 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
 const Paths = @import("paths.zig").Paths;
-const Version = @import("version.zig").Version;
+const version_mod = @import("version.zig");
+const Version = version_mod.Version;
+const Constraint = version_mod.Constraint;
 
 pub const ResolutionSource = enum {
     env_var,
@@ -43,12 +45,12 @@ pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
     return val_start[0..end_quote];
 }
 
-/// Find the highest installed version that satisfies the given minimum required version.
-pub fn findHighestSatisfyingInstalled(
+/// Find the highest installed version that satisfies the given constraint.
+pub fn findHighestMatchingInstalled(
     paths: *const Paths,
     io: Io,
     allocator: Allocator,
-    min_ver: Version,
+    constraint: Constraint,
 ) !?[]u8 {
     const cwd = Io.Dir.cwd();
     var v_dir = cwd.openDir(io, paths.versions_dir, .{ .iterate = true }) catch |err| switch (err) {
@@ -66,7 +68,7 @@ pub fn findHighestSatisfyingInstalled(
         if (!paths.isVersionInstalled(io, allocator, entry.name)) continue;
 
         const parsed = Version.parse(entry.name) catch continue;
-        if (!parsed.satisfiesMinimum(min_ver)) continue;
+        if (!constraint.satisfies(parsed)) continue;
 
         if (best_ver == null or parsed.order(best_ver.?) == .gt) {
             best_ver = parsed;
@@ -76,6 +78,16 @@ pub fn findHighestSatisfyingInstalled(
     }
 
     return best_name;
+}
+
+/// Find the highest installed version that satisfies the given minimum required version.
+pub fn findHighestSatisfyingInstalled(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    min_ver: Version,
+) !?[]u8 {
+    return findHighestMatchingInstalled(paths, io, allocator, Constraint.gte(min_ver));
 }
 
 /// Resolves the Zig version following the resolution hierarchy:
@@ -120,6 +132,24 @@ pub fn resolve(
         if (cwd.readFile(io, zig_version_path, &buf)) |bytes| {
             const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
             if (trimmed.len > 0) {
+                const constraint = Constraint.parse(trimmed) catch null;
+                if (constraint) |c| {
+                    if (c.exactPin()) |exact| {
+                        return .{
+                            .version = try exact.toString(allocator),
+                            .source = .zig_version_file,
+                            .source_path = try allocator.dupe(u8, zig_version_path),
+                        };
+                    }
+                    if (try findHighestMatchingInstalled(paths, io, allocator, c)) |matched| {
+                        return .{
+                            .version = matched,
+                            .source = .zig_version_file,
+                            .source_path = try allocator.dupe(u8, zig_version_path),
+                        };
+                    }
+                    return error.NoCompatibleVersionInstalled;
+                }
                 return .{
                     .version = try allocator.dupe(u8, trimmed),
                     .source = .zig_version_file,
@@ -234,5 +264,41 @@ test "resolve hierarchy .zig-version file" {
     defer resolved.deinit(allocator);
 
     try std.testing.expectEqualStrings("0.16.0", resolved.version);
+    try std.testing.expectEqual(ResolutionSource.zig_version_file, resolved.source);
+}
+
+test "resolve hierarchy .zig-version semver constraint" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    // Install fake 0.16.0, 0.17.0, 0.17.1, 0.18.0 binaries
+    for ([_][]const u8{ "0.16.0", "0.17.0", "0.17.1", "0.18.0" }) |ver| {
+        const v_dir = try paths.versionDir(allocator, ver);
+        defer allocator.free(v_dir);
+        try Io.Dir.cwd().createDirPath(io, v_dir);
+
+        const bin_path = try paths.versionZigBin(allocator, ver);
+        defer allocator.free(bin_path);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+    }
+
+    const zv_file = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(zv_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zv_file, .data = "^0.17.0\n" });
+
+    var resolved = try resolve(&paths, io, allocator, null, tmp_path);
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqualStrings("0.17.1", resolved.version);
     try std.testing.expectEqual(ResolutionSource.zig_version_file, resolved.source);
 }
