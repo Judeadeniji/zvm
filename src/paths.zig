@@ -253,7 +253,8 @@ test "Paths initialization and directory resolution" {
 
     const v_dir = try paths.versionDir(allocator, "0.17.0");
     defer allocator.free(v_dir);
-    try std.testing.expect(std.mem.endsWith(u8, v_dir, "versions/0.17.0"));
+    // Use platform-native separator so this passes on both POSIX and Windows.
+    try std.testing.expect(std.mem.endsWith(u8, v_dir, "versions" ++ std.fs.path.sep_str ++ "0.17.0"));
 
     const bin_path = try paths.versionZigBin(allocator, "0.17.0");
     defer allocator.free(bin_path);
@@ -296,32 +297,40 @@ test "resolveBaseDirForOs platform discovery" {
     // Linux fallback to ~/.zvm when XDG_DATA_HOME unset
     const linux_default = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
     defer allocator.free(linux_default);
+    // Normalize to forward slashes: std.fs.path.join uses the host separator,
+    // so on Windows this would produce backslashes even for a .linux os_tag.
+    std.mem.replaceScalar(u8, linux_default, '\\', '/');
     try std.testing.expectEqualStrings("/home/alice/.zvm", linux_default);
 
     // macOS Application Support
     const mac_default = try Paths.resolveBaseDirForOs(allocator, .macos, &env, null);
     defer allocator.free(mac_default);
+    std.mem.replaceScalar(u8, mac_default, '\\', '/');
     try std.testing.expectEqualStrings("/home/alice/Library/Application Support/zvm", mac_default);
 
     // Windows USERPROFILE fallback then LOCALAPPDATA
     const win_fallback = try Paths.resolveBaseDirForOs(allocator, .windows, &env, null);
     defer allocator.free(win_fallback);
+    std.mem.replaceScalar(u8, win_fallback, '\\', '/');
     try std.testing.expectEqualStrings("C:/Users/alice/.zvm", win_fallback);
 
     try env.put("LOCALAPPDATA", "C:/Users/alice/AppData/Local");
     const win_local = try Paths.resolveBaseDirForOs(allocator, .windows, &env, null);
     defer allocator.free(win_local);
+    std.mem.replaceScalar(u8, win_local, '\\', '/');
     try std.testing.expectEqualStrings("C:/Users/alice/AppData/Local/zvm", win_local);
 
     // XDG_DATA_HOME overrides Linux and macOS
     try env.put("XDG_DATA_HOME", "/home/alice/.local/share");
     const linux_xdg = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
     defer allocator.free(linux_xdg);
+    std.mem.replaceScalar(u8, linux_xdg, '\\', '/');
     try std.testing.expectEqualStrings("/home/alice/.local/share/zvm", linux_xdg);
 
     // ZVM_PATH overrides everything except custom_base
     try env.put("ZVM_PATH", "/opt/zvm");
     const zvm_override = try Paths.resolveBaseDirForOs(allocator, .linux, &env, null);
     defer allocator.free(zvm_override);
+    std.mem.replaceScalar(u8, zvm_override, '\\', '/');
     try std.testing.expectEqualStrings("/opt/zvm", zvm_override);
 }

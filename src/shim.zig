@@ -260,7 +260,17 @@ test "setupShim creates, detects, and updates symlink" {
     var valid = try inspectShim(&paths, io, allocator, fake_zvm);
     defer valid.deinit(allocator);
     switch (valid) {
-        .valid => |t| try std.testing.expectEqualStrings(fake_zvm, t),
+        // On POSIX the symlink target is fake_zvm; on Windows inspectShim
+        // returns the shim_path itself because it copies instead of symlinking.
+        .valid => |t| {
+            if (Paths.is_windows) {
+                const shim = try paths.zigShimPath(allocator);
+                defer allocator.free(shim);
+                try std.testing.expectEqualStrings(shim, t);
+            } else {
+                try std.testing.expectEqualStrings(fake_zvm, t);
+            }
+        },
         else => return error.TestUnexpectedResult,
     }
 
