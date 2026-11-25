@@ -6,63 +6,67 @@ This document outlines the development phases, architecture milestones, and plan
 
 ## Phase 1: Core Foundation & Version Resolution
 
-- [ ] **Data Model & Directory Layout**
-  - Define directory structure (`~/.zvm/versions/`, `~/.zvm/bin/`, `~/.zvm/cache/`, `~/.zvm/default`).
-  - Implement platform-aware configuration directory discovery (XDG on Linux, `~/Library/Application Support` on macOS, `%LOCALAPPDATA%` on Windows).
-- [ ] **Semver & Version Representation**
-  - Parse semver strings (`X.Y.Z`, pre-releases, and `master`).
-  - Implement version comparisons and constraint checking (`>=`, `^`, `~`).
-- [ ] **Project Context & Walk-up Resolver**
-  - Walk parent directories to discover `.zig-version`.
-  - Parse `build.zig.zon` and extract `minimum_zig_version`.
-  - Resolve precedence: `ZIG_VERSION` env > `.zig-version` > `build.zig.zon` > user global default.
+- [x] **Data Model & Directory Layout** (`src/paths.zig`)
+  - [x] Define directory structure (`~/.zvm/versions/`, `~/.zvm/bin/`, `~/.zvm/cache/`, `~/.zvm/default`) and `ZVM_PATH` override.
+  - [ ] Implement platform-aware configuration directory discovery (`XDG_DATA_HOME` on Linux, `~/Library/Application Support` on macOS, `%LOCALAPPDATA%` on Windows).
+- [x] **Semver & Version Representation** (`src/version.zig`)
+  - [x] Parse semver strings (`X.Y.Z`, pre-releases, and `master` / `nightly`).
+  - [x] Implement version ordering and `minimum_zig_version` satisfaction checks.
+  - [ ] Implement full semver constraint expressions (`>=`, `^`, `~`) for `.zig-version`.
+- [x] **Project Context & Walk-up Resolver** (`src/resolver.zig`)
+  - [x] Walk parent directories to discover `.zig-version`.
+  - [x] Parse `build.zig.zon` and extract `minimum_zig_version`.
+  - [x] Resolve precedence: `ZIG_VERSION` env > `.zig-version` > `build.zig.zon` > user global default.
 
 ---
 
 ## Phase 2: Transparent Router / Shim
 
-- [ ] **Execution Dispatcher**
-  - Forward calls to the resolved Zig binary transparently.
-  - Implement zero-overhead process replacement (`execv` / `execve`) on POSIX systems.
-  - Implement process spawning with stream inheritance and exit code propagation on Windows.
-- [ ] **Shim Management**
-  - Generate a `zig` shim in `~/.zvm/bin/` pointing to the `zvm` dispatcher.
-  - Provide self-check helper (`zvm doctor`) to verify PATH priority.
-- [ ] **Friendly Fallbacks**
-  - Clear error reporting if no compatible version is installed, with guidance on how to install the required version (e.g. `Run 'zvm install 0.17.0' to install`).
+- [x] **Execution Dispatcher** (`src/router.zig`)
+  - [x] Forward calls to the resolved Zig binary transparently.
+  - [x] Implement zero-overhead process replacement (`std.process.replace` / `execv`) on POSIX systems.
+  - [ ] Verify/implement child process spawning with stream inheritance and exit code propagation on Windows.
+- [x] **Shim Management** (`src/shim.zig`)
+  - [x] Generate a `zig` shim in `~/.zvm/bin/` pointing to the `zvm` dispatcher (`zvm setup` / `zvm shim`).
+  - [x] Provide self-check helper (`zvm doctor`) to verify shim state and `PATH` priority.
+- [x] **Friendly Fallbacks**
+  - [x] Clear error reporting if no compatible version is installed, with guidance on how to install the required version (e.g. `Run 'zvm install 0.17.0' to install`).
 
 ---
 
 ## Phase 3: Release Discovery & Installation Engine
 
-- [ ] **Metadata Fetching**
-  - Fetch and parse `https://ziglang.org/download/index.json` using `std.http.Client` and `std.json`.
-  - Detect target system architecture and OS to pick appropriate tarball URLs.
-- [ ] **Download & Integrity Verification**
-  - Download release archives to cache directory with progress indication.
-  - Compute SHA-256 checksums and verify against release manifest.
-- [ ] **Archive Extraction**
-  - Unpack `.tar.xz`, `.tar.gz`, or `.zip` directly into `~/.zvm/versions/<version>/`.
-  - Set appropriate executable permissions on extracted binaries.
+- [x] **Metadata Fetching** (`src/downloader.zig`)
+  - [x] Fetch and parse `https://ziglang.org/download/index.json` using `std.http.Client` and `std.json`.
+  - [x] Detect target system architecture and OS to pick appropriate tarball URLs.
+- [ ] **Download & Integrity Verification** (`src/downloader.zig`)
+  - [x] Stream release archives to `~/.zvm/cache/` and reuse valid cached files.
+  - [x] Compute SHA-256 checksums and verify against release manifest.
+  - [ ] Display bytes/percentage progress indication during archive downloads.
+- [x] **Archive Extraction** (`src/downloader.zig`)
+  - [x] Unpack `.tar.xz`, `.tar.gz`, or `.zip` directly into `~/.zvm/versions/<version>/` (via staging directory).
+  - [x] Set appropriate executable permissions on extracted binaries (`executable_bit_only`).
+  - [ ] Add end-to-end verification test against real `.tar.xz` and `.zip` archives.
 - [ ] **Master / Nightly Handling**
-  - Support installing and updating `master` builds with commit hash tracking.
+  - [ ] Track resolved `master` commit/dev version strings for `zvm install master` update checks.
 
 ---
 
 ## Phase 4: CLI Interface & Management Commands
 
-- [ ] **CLI Argument Parser**
-  - Implement lightweight, dependency-free argument parser in idiomatic Zig.
+- [x] **CLI Framework & Modular Commands** (`src/cli/`, powered by `zli`)
+  - [x] Modularize subcommands under `src/cli/` with shared `AppContext` (`src/cli/context.zig`).
 - [ ] **Commands**
-  - `zvm install <version>`: Download and install a specific version or `master`.
-  - `zvm use <version>`: Set the global default version.
-  - `zvm pin <version>`: Pin version for the current directory by creating/updating `.zig-version`.
-  - `zvm list`: List locally installed Zig versions.
-  - `zvm list-remote`: List available upstream stable releases and nightly builds.
-  - `zvm current`: Display which version is active in the current directory and how it was resolved.
-  - `zvm which [version]`: Print path to the active or specified Zig executable.
-  - `zvm uninstall <version>`: Remove an installed Zig version.
-  - `zvm clean`: Remove cached download tarballs.
+  - [x] `zvm install <version> [--force]`: Download, verify, and install a specific version or `master`.
+  - [x] `zvm use <version>`: Set the global default version.
+  - [x] `zvm pin <version>`: Pin version for the current directory by creating/updating `.zig-version`.
+  - [x] `zvm list`: List locally installed Zig versions and highlight active version.
+  - [x] `zvm list-remote [--all]`: List available upstream stable releases and `master`.
+  - [x] `zvm current`: Display which version is active in the current directory and how it was resolved.
+  - [x] `zvm which [version]`: Print path to the active or specified Zig executable.
+  - [x] `zvm uninstall <version>`: Remove an installed Zig version.
+  - [x] `zvm setup` / `zvm shim` & `zvm doctor`: Manage the `zig` shim and diagnose `PATH` precedence.
+  - [ ] `zvm clean`: Remove cached download tarballs.
 
 ---
 
