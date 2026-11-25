@@ -1,6 +1,13 @@
 zig-out/
 zig-pkg/
 .zig-cache/
+
+# IDE / editor
 .vscode/
 .claude/
 .codestudio/
+
+# Agent config dirs (not relevant to end users)
+.agents/
+skills/
+skills-lock.json
