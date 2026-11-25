@@ -14,9 +14,12 @@ pub const ResolutionSource = resolver.ResolutionSource;
 pub const router = @import("router.zig");
 pub const Router = router.Router;
 
+pub const downloader = @import("downloader.zig");
+
 test {
     _ = paths;
     _ = version;
     _ = resolver;
     _ = router;
+    _ = downloader;
 }
