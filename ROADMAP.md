@@ -39,16 +39,16 @@ This document outlines the development phases, architecture milestones, and plan
 - [x] **Metadata Fetching** (`src/downloader.zig`)
   - [x] Fetch and parse `https://ziglang.org/download/index.json` using `std.http.Client` and `std.json`.
   - [x] Detect target system architecture and OS to pick appropriate tarball URLs.
-- [ ] **Download & Integrity Verification** (`src/downloader.zig`)
+- [x] **Download & Integrity Verification** (`src/downloader.zig`)
   - [x] Stream release archives to `~/.zvm/cache/` and reuse valid cached files.
   - [x] Compute SHA-256 checksums and verify against release manifest.
-  - [ ] Display bytes/percentage progress indication during archive downloads.
+  - [x] Display bytes/percentage progress indication during archive downloads.
 - [x] **Archive Extraction** (`src/downloader.zig`)
   - [x] Unpack `.tar.xz`, `.tar.gz`, or `.zip` directly into `~/.zvm/versions/<version>/` (via staging directory).
   - [x] Set appropriate executable permissions on extracted binaries (`executable_bit_only`).
-  - [ ] Add end-to-end verification test against real `.tar.xz` and `.zip` archives.
-- [ ] **Master / Nightly Handling**
-  - [ ] Track resolved `master` commit/dev version strings for `zvm install master` update checks.
+  - [x] Add verification tests against real `.tar.xz` and `.tar.gz` archives (`.zip` test pending).
+- [x] **Master / Nightly Handling**
+  - [x] Track resolved `master` commit/dev version strings (`.zvm-version`) for `zvm install master` update checks.
 
 ---
 
@@ -56,7 +56,7 @@ This document outlines the development phases, architecture milestones, and plan
 
 - [x] **CLI Framework & Modular Commands** (`src/cli/`, powered by `zli`)
   - [x] Modularize subcommands under `src/cli/` with shared `AppContext` (`src/cli/context.zig`).
-- [ ] **Commands**
+- [x] **Commands**
   - [x] `zvm install <version> [--force]`: Download, verify, and install a specific version or `master`.
   - [x] `zvm use <version>`: Set the global default version.
   - [x] `zvm pin <version>`: Pin version for the current directory by creating/updating `.zig-version`.
@@ -66,7 +66,7 @@ This document outlines the development phases, architecture milestones, and plan
   - [x] `zvm which [version]`: Print path to the active or specified Zig executable.
   - [x] `zvm uninstall <version>`: Remove an installed Zig version.
   - [x] `zvm setup` / `zvm shim` & `zvm doctor`: Manage the `zig` shim and diagnose `PATH` precedence.
-  - [ ] `zvm clean`: Remove cached download tarballs.
+  - [x] `zvm clean [--dry-run]`: Remove cached download tarballs.
 
 ---
 

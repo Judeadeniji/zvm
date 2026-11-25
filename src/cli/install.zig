@@ -1,6 +1,34 @@
+const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+
+const SpinnerProgress = struct {
+    spinner: *zli.Spinner,
+    version: []const u8,
+
+    fn update(raw_ctx: *anyopaque, downloaded: u64, total: ?u64) void {
+        const self: *SpinnerProgress = @ptrCast(@alignCast(raw_ctx));
+        const dl_mb = @as(f64, @floatFromInt(downloaded)) / (1024.0 * 1024.0);
+        if (total) |t| {
+            if (t > 0) {
+                const total_mb = @as(f64, @floatFromInt(t)) / (1024.0 * 1024.0);
+                const pct = @min(@as(u64, 100), (downloaded * 100) / t);
+                self.spinner.updateMessage("Downloading Zig {s} ({d:.1} / {d:.1} MB, {d}%)...", .{
+                    self.version,
+                    dl_mb,
+                    total_mb,
+                    pct,
+                }) catch {};
+                return;
+            }
+        }
+        self.spinner.updateMessage("Downloading Zig {s} ({d:.1} MB)...", .{
+            self.version,
+            dl_mb,
+        }) catch {};
+    }
+};
 
 pub fn command(init_options: zli.InitOptions) !*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -36,13 +64,24 @@ fn handle(ctx: zli.CommandContext) !void {
 
     try ctx.spinner.start("Installing Zig {s}...", .{canonical});
 
+    var progress_state = SpinnerProgress{
+        .spinner = ctx.spinner,
+        .version = canonical,
+    };
+
     var res = zvm.downloader.installVersion(
         app.paths,
         ctx.io,
         ctx.allocator,
         ctx.environ_map,
         canonical,
-        force,
+        .{
+            .force = force,
+            .progress = .{
+                .ctx = &progress_state,
+                .on_progress = SpinnerProgress.update,
+            },
+        },
     ) catch |err| {
         switch (err) {
             error.VersionNotFound => try ctx.spinner.fail("Zig version '{s}' was not found in release index.", .{canonical}),
@@ -56,11 +95,19 @@ fn handle(ctx: zli.CommandContext) !void {
     defer res.deinit(ctx.allocator);
 
     if (res.already_installed) {
-        try ctx.spinner.info("Zig {s} is already installed at {s} (use --force to reinstall).", .{
-            res.version,
-            res.install_dir,
-        });
-    } else if (!@import("std").mem.eql(u8, res.version, res.resolved_version)) {
+        if (!std.mem.eql(u8, res.version, res.resolved_version)) {
+            try ctx.spinner.info("Zig {s} ({s}) is already up to date at {s} (use --force to reinstall).", .{
+                res.version,
+                res.resolved_version,
+                res.install_dir,
+            });
+        } else {
+            try ctx.spinner.info("Zig {s} is already installed at {s} (use --force to reinstall).", .{
+                res.version,
+                res.install_dir,
+            });
+        }
+    } else if (!std.mem.eql(u8, res.version, res.resolved_version)) {
         try ctx.spinner.succeed("Installed Zig {s} ({s}) to {s}.", .{
             res.version,
             res.resolved_version,

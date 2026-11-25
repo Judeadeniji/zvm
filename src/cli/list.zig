@@ -39,6 +39,13 @@ fn handle(ctx: zli.CommandContext) !void {
     for (versions) |ver| {
         const is_active = if (active_version) |act| std.mem.eql(u8, act, ver) else false;
         const marker = if (is_active) "* " else "  ";
-        try ctx.writer.print("{s}{s}\n", .{ marker, ver });
+        const meta = app.paths.readVersionMeta(ctx.io, ctx.allocator, ver) catch null;
+        defer if (meta) |m| ctx.allocator.free(m);
+
+        if (meta != null and !std.mem.eql(u8, meta.?, ver)) {
+            try ctx.writer.print("{s}{s} ({s})\n", .{ marker, ver, meta.? });
+        } else {
+            try ctx.writer.print("{s}{s}\n", .{ marker, ver });
+        }
     }
 }

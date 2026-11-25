@@ -143,6 +143,38 @@ pub const Paths = struct {
         allocator.free(versions);
     }
 
+    /// Reads the resolved version metadata file (`.zvm-version`) inside a version directory, if present.
+    pub fn readVersionMeta(self: *const Paths, io: Io, allocator: Allocator, version: []const u8) !?[]u8 {
+        const v_dir = try self.versionDir(allocator, version);
+        defer allocator.free(v_dir);
+        const meta_path = try std.fs.path.join(allocator, &.{ v_dir, ".zvm-version" });
+        defer allocator.free(meta_path);
+
+        var buf: [256]u8 = undefined;
+        const bytes = Io.Dir.cwd().readFile(io, meta_path, &buf) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+        if (trimmed.len == 0) return null;
+        return try allocator.dupe(u8, trimmed);
+    }
+
+    /// Writes the resolved version metadata file (`.zvm-version`) inside a version directory.
+    pub fn writeVersionMeta(self: *const Paths, io: Io, allocator: Allocator, version: []const u8, resolved_version: []const u8) !void {
+        const v_dir = try self.versionDir(allocator, version);
+        defer allocator.free(v_dir);
+        const meta_path = try std.fs.path.join(allocator, &.{ v_dir, ".zvm-version" });
+        defer allocator.free(meta_path);
+
+        const payload = try allocator.print("{s}\n", .{resolved_version});
+        defer allocator.free(payload);
+        try Io.Dir.cwd().writeFile(io, .{
+            .sub_path = meta_path,
+            .data = payload,
+        });
+    }
+
     /// Sets the global default version by writing to ~/.zvm/default.
     pub fn writeDefaultVersion(self: *const Paths, io: Io, version: []const u8) !void {
         try self.ensureDirs(io);

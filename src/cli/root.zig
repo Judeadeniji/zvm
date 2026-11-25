@@ -14,6 +14,7 @@ const which_cmd = @import("which.zig");
 const uninstall_cmd = @import("uninstall.zig");
 const setup_cmd = @import("setup.zig");
 const doctor_cmd = @import("doctor.zig");
+const clean_cmd = @import("clean.zig");
 
 fn showHelp(ctx: zli.CommandContext) !void {
     try ctx.command.printHelp();
@@ -39,6 +40,7 @@ pub fn buildRootCommand(init_options: zli.InitOptions) !*zli.Command {
         uninstall_cmd.command,
         setup_cmd.command,
         doctor_cmd.command,
+        clean_cmd.command,
     };
 
     for (subcommands) |builder| {
@@ -125,10 +127,12 @@ test "buildRootCommand registers expected subcommands" {
         "uninstall",
         "setup",
         "doctor",
+        "clean",
     };
 
     for (expected) |name| {
         try std.testing.expect(root.commands_by_name.contains(name));
     }
     try std.testing.expect(root.findCommand("shim") != null);
+    _ = clean_cmd;
 }

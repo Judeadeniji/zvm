@@ -41,6 +41,16 @@ pub const ReleaseSummary = struct {
     }
 };
 
+pub const ProgressCallback = struct {
+    ctx: *anyopaque,
+    on_progress: *const fn (ctx: *anyopaque, downloaded: u64, total: ?u64) void,
+};
+
+pub const InstallOptions = struct {
+    force: bool = false,
+    progress: ?ProgressCallback = null,
+};
+
 pub const InstallResult = struct {
     version: []const u8,
     resolved_version: []const u8,
@@ -315,6 +325,53 @@ pub fn verifyFileSha256(io: Io, file_path: []const u8, expected_hex: []const u8)
     }
 }
 
+const ProgressWriter = struct {
+    interface: Io.Writer,
+    inner: *Io.Writer,
+    total: ?u64,
+    callback: ?ProgressCallback,
+    bytes_written: u64 = 0,
+    last_reported: u64 = 0,
+
+    const report_interval: u64 = 256 * 1024;
+
+    fn init(inner: *Io.Writer, total: ?u64, callback: ?ProgressCallback) ProgressWriter {
+        return .{
+            .interface = .{
+                .vtable = &.{
+                    .drain = drain,
+                    .flush = flush,
+                },
+                .buffer = &.{},
+            },
+            .inner = inner,
+            .total = total,
+            .callback = callback,
+        };
+    }
+
+    fn drain(w: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+        const self: *ProgressWriter = @alignCast(@fieldParentPtr("interface", w));
+        const n = try self.inner.writeSplat(data, splat);
+        self.bytes_written += n;
+        if (self.callback) |cb| {
+            if (self.bytes_written - self.last_reported >= report_interval) {
+                self.last_reported = self.bytes_written;
+                cb.on_progress(cb.ctx, self.bytes_written, self.total);
+            }
+        }
+        return n;
+    }
+
+    fn flush(w: *Io.Writer) Io.Writer.Error!void {
+        const self: *ProgressWriter = @alignCast(@fieldParentPtr("interface", w));
+        try self.inner.flush();
+        if (self.callback) |cb| {
+            cb.on_progress(cb.ctx, self.bytes_written, self.total);
+        }
+    }
+};
+
 /// Streams a URL to `dest_path`, deleting partial files on failure.
 pub fn downloadToFile(
     io: Io,
@@ -322,8 +379,10 @@ pub fn downloadToFile(
     environ_map: ?*const EnvironMap,
     url: []const u8,
     dest_path: []const u8,
+    expected_size: ?u64,
+    progress: ?ProgressCallback,
 ) !void {
-    downloadToFileInner(io, allocator, environ_map, url, dest_path) catch |err| {
+    downloadToFileInner(io, allocator, environ_map, url, dest_path, expected_size, progress) catch |err| {
         Io.Dir.cwd().deleteFile(io, dest_path) catch {};
         return err;
     };
@@ -335,6 +394,8 @@ fn downloadToFileInner(
     environ_map: ?*const EnvironMap,
     url: []const u8,
     dest_path: []const u8,
+    expected_size: ?u64,
+    progress: ?ProgressCallback,
 ) !void {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
@@ -348,12 +409,13 @@ fn downloadToFileInner(
 
     var write_buf: [32 * 1024]u8 = undefined;
     var file_writer = out_file.writer(io, &write_buf);
+    var prog_writer = ProgressWriter.init(&file_writer.interface, expected_size, progress);
 
     const res = try client.fetch(.{
         .location = .{ .url = url },
-        .response_writer = &file_writer.interface,
+        .response_writer = &prog_writer.interface,
     });
-    try file_writer.interface.flush();
+    try prog_writer.interface.flush();
 
     if (res.status != .ok) {
         return error.HttpRequestFailed;
@@ -439,7 +501,7 @@ pub fn installVersion(
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
     version_key: []const u8,
-    force: bool,
+    options: InstallOptions,
 ) !InstallResult {
     try paths.ensureDirs(io);
 
@@ -447,7 +509,7 @@ pub fn installVersion(
     errdefer allocator.free(install_dir);
 
     const is_master = std.mem.eql(u8, version_key, "master");
-    if (!force and !is_master and paths.isVersionInstalled(io, allocator, version_key)) {
+    if (!options.force and !is_master and paths.isVersionInstalled(io, allocator, version_key)) {
         return .{
             .version = try allocator.dupe(u8, version_key),
             .resolved_version = try allocator.dupe(u8, version_key),
@@ -463,6 +525,20 @@ pub fn installVersion(
     var artifact = try findArtifact(allocator, index_bytes, version_key, tkey);
     defer artifact.deinit(allocator);
 
+    // For `master`, compare against stored `.zvm-version` so up-to-date builds skip download.
+    if (!options.force and is_master and paths.isVersionInstalled(io, allocator, version_key)) {
+        const current_meta = paths.readVersionMeta(io, allocator, version_key) catch null;
+        defer if (current_meta) |m| allocator.free(m);
+        if (current_meta != null and std.mem.eql(u8, current_meta.?, artifact.resolved_version)) {
+            return .{
+                .version = try allocator.dupe(u8, artifact.version_key),
+                .resolved_version = try allocator.dupe(u8, artifact.resolved_version),
+                .install_dir = install_dir,
+                .already_installed = true,
+            };
+        }
+    }
+
     const archive_name = std.fs.path.basename(artifact.tarball);
     const cache_path = try std.fs.path.join(allocator, &.{ paths.cache_dir, archive_name });
     defer allocator.free(cache_path);
@@ -474,7 +550,11 @@ pub fn installVersion(
     };
 
     if (!cache_valid) {
-        try downloadToFile(io, allocator, environ_map, artifact.tarball, cache_path);
+        const expected_size: ?u64 = if (artifact.size.len > 0)
+            std.fmt.parseInt(u64, artifact.size, 10) catch null
+        else
+            null;
+        try downloadToFile(io, allocator, environ_map, artifact.tarball, cache_path, expected_size, options.progress);
         verifyFileSha256(io, cache_path, artifact.shasum) catch |err| {
             Io.Dir.cwd().deleteFile(io, cache_path) catch {};
             return err;
@@ -482,6 +562,7 @@ pub fn installVersion(
     }
 
     try extractArchive(io, allocator, cache_path, install_dir);
+    try paths.writeVersionMeta(io, allocator, version_key, artifact.resolved_version);
 
     return .{
         .version = try allocator.dupe(u8, artifact.version_key),
@@ -578,4 +659,71 @@ test "verifyFileSha256 matches and catches mismatch" {
 
     const bad_hex = "0000000000000000000000000000000000000000000000000000000000000000";
     try std.testing.expectError(error.ChecksumMismatch, verifyFileSha256(io, tmp_path, bad_hex));
+}
+
+test "extractArchive unpacks real tar.xz and tar.gz stripping root directory" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const tar_xz_bytes =
+        "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21\x01" ++
+        "\x16\x00\x00\x00\x74\x2f\xe5\xa3\xe0\x27\xff\x00\xab\x5d\x00\x3d" ++
+        "\x1a\x49\x15\x79\xcd\x8f\x6b\xfb\x5f\xa8\xdc\xc5\xa6\xfd\xdf\xd1" ++
+        "\x61\x8c\xb8\xb5\x95\x48\x61\x17\xda\xb8\xa8\xf9\x08\x56\xbc\x0e" ++
+        "\xbe\x6b\xfb\x78\xa9\x48\x3f\x6e\x28\x81\x76\x1b\x11\xfc\xc4\xf6" ++
+        "\xbf\xd9\x3c\x50\x63\x89\x82\x01\xdd\x0f\x8c\x3b\x4f\x9e\x64\x6a" ++
+        "\x5b\x21\xe4\x9e\x47\x5a\x1b\xa5\x82\xf5\xd7\xda\x59\xf1\x45\x35" ++
+        "\x30\x4c\x16\x06\x24\x30\xa9\xec\xbc\xaa\x8f\x20\xd1\x86\x90\x6e" ++
+        "\x03\x91\xc6\x32\x55\x92\x5d\x3f\x4b\x0e\x75\x53\x60\x85\xc0\x86" ++
+        "\xb2\xe3\xa8\xbc\x61\xb9\xa3\xc3\x9e\x90\x4b\x36\x5c\x0d\xd6\x53" ++
+        "\x9c\x62\x39\x80\x75\xa1\xeb\x81\x37\x83\xb8\xe0\x85\xaa\xf8\xaf" ++
+        "\xdd\x83\x48\x97\xa7\x0b\xf3\x19\xc3\x48\x7d\x9e\x8c\xac\x61\xc6" ++
+        "\x9a\xa7\x88\x31\x4d\x1b\xd6\xbd\x42\x80\x00\x00\x1e\x5f\x9e\x4b" ++
+        "\xab\x15\xe3\x86\x00\x01\xc7\x01\x80\x50\x00\x00\xea\x4b\x3d\x73" ++
+        "\xb1\xc4\x67\xfb\x02\x00\x00\x00\x00\x04\x59\x5a";
+
+    const tar_gz_bytes =
+        "\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff\xed\xd4\xb1\x0a\x83\x30" ++
+        "\x10\xc6\xf1\xcc\x3e\x45\x4a\x67\x4d\x82\xda\x0c\xa5\x0f\x53\xad" ++
+        "\x68\xa0\x28\x34\x29\x14\x9f\xbe\xd1\x0e\x05\xa1\x9b\x08\x6d\xff" ++
+        "\x3f\x38\x2e\x64\xb9\xe5\xbe\x1b\x5d\x9b\x86\xc6\x87\x54\x67\xc6" ++
+        "\x66\x5a\x8d\xae\x15\x6b\xd3\x91\x2d\xcb\xb9\x47\xcb\xae\x75\x9e" ++
+        "\xbf\xdf\xd3\xbf\xd1\xb6\xb0\x42\x6a\xb1\x81\xbb\x0f\xe7\x5b\x1c" ++
+        "\x2f\xfe\xd3\x7e\xa7\x2a\xd7\x2b\xdf\x25\x4d\xdd\x0d\xf2\xb5\x05" ++
+        "\xf3\x46\x24\x02\xbf\x6f\x5c\xe4\xff\xea\x2a\xe5\xc3\x65\xaa\x6c" ++
+        "\xad\x5b\x30\x85\xfa\x50\x14\x9f\xf3\x6f\xca\x45\xfe\xf3\x78\x2f" ++
+        "\xc8\xff\x16\xea\xa1\xf7\x41\x3e\xe4\x49\x9a\x23\x89\x07\x00\x00" ++
+        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf8\x3e\x4f\x02\x81\x1c\xcd" ++
+        "\x00\x28\x00\x00";
+
+    const cases = [_]struct { filename: []const u8, data: []const u8, dest_name: []const u8 }{
+        .{ .filename = "zig-test.tar.xz", .data = tar_xz_bytes, .dest_name = "out-xz" },
+        .{ .filename = "zig-test.tar.gz", .data = tar_gz_bytes, .dest_name = "out-gz" },
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cwd = Io.Dir.cwd();
+    for (cases) |c| {
+        const archive_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path, c.filename });
+        defer allocator.free(archive_path);
+        try cwd.writeFile(io, .{ .sub_path = archive_path, .data = c.data });
+
+        const dest_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path, c.dest_name });
+        defer allocator.free(dest_path);
+
+        try extractArchive(io, allocator, archive_path, dest_path);
+
+        const zig_path = try std.fs.path.join(allocator, &.{ dest_path, "zig" });
+        defer allocator.free(zig_path);
+        var buf: [64]u8 = undefined;
+        const zig_content = try cwd.readFile(io, zig_path, &buf);
+        try std.testing.expectEqualStrings("#!/bin/sh\necho 0.17.0-test\n", zig_content);
+
+        const std_path = try std.fs.path.join(allocator, &.{ dest_path, "lib", "std", "std.zig" });
+        defer allocator.free(std_path);
+        const std_content = try cwd.readFile(io, std_path, &buf);
+        try std.testing.expectEqualStrings("const x = 1;\n", std_content);
+    }
 }
