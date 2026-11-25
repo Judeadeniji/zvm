@@ -23,32 +23,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Zig 0.17.0
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ runner.os }}-${{ runner.arch }}" in
-            Linux-X64)   KEY="x86_64-linux"   ;;
-            macOS-ARM64) KEY="aarch64-macos"  ;;
-            macOS-X64)   KEY="x86_64-macos"   ;;
-            Windows-X64) KEY="x86_64-windows" ;;
-            *) echo "Unsupported platform: ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
-          esac
-          URL=$(curl -fsSL https://ziglang.org/download/index.json \
-                | KEY="$KEY" python3 -c \
-                  "import sys,json,os; print(json.load(sys.stdin)['0.17.0'][os.environ['KEY']]['tarball'])")
-          if [[ "$URL" == *.zip ]]; then
-            curl -fsSL "$URL" -o zig.zip
-            7z x zig.zip -o. > /dev/null
-            DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.zip'))")
-          else
-            curl -fsSL "$URL" | tar -xJ
-            DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.tar.xz').removesuffix('.tar.gz'))")
-          fi
-          echo "$PWD/$DIR" >> "$GITHUB_PATH"
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -61,6 +43,7 @@ jobs:
 
   cross-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
