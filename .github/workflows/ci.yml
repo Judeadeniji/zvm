@@ -20,23 +20,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIG_VER="0.17.0"
           case "${{ runner.os }}-${{ runner.arch }}" in
-            Linux-X64)   OS=linux;   ARCH=x86_64;  EXT=tar.xz ;;
-            macOS-ARM64) OS=macos;   ARCH=aarch64; EXT=tar.xz ;;
-            macOS-X64)   OS=macos;   ARCH=x86_64;  EXT=tar.xz ;;
-            Windows-X64) OS=windows; ARCH=x86_64;  EXT=zip    ;;
+            Linux-X64)   KEY="x86_64-linux"   ;;
+            macOS-ARM64) KEY="aarch64-macos"  ;;
+            macOS-X64)   KEY="x86_64-macos"   ;;
+            Windows-X64) KEY="x86_64-windows" ;;
             *) echo "Unsupported platform: ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
           esac
-          NAME="zig-${OS}-${ARCH}-${ZIG_VER}"
-          URL="https://ziglang.org/download/${ZIG_VER}/${NAME}.${EXT}"
-          if [ "$EXT" = "zip" ]; then
+          URL=$(curl -fsSL https://ziglang.org/download/index.json \
+                | KEY="$KEY" python3 -c \
+                  "import sys,json,os; print(json.load(sys.stdin)['0.17.0'][os.environ['KEY']]['tarball'])")
+          if [[ "$URL" == *.zip ]]; then
             curl -fsSL "$URL" -o zig.zip
             7z x zig.zip -o. > /dev/null
+            DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.zip'))")
           else
             curl -fsSL "$URL" | tar -xJ
+            DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.tar.xz').removesuffix('.tar.gz'))")
           fi
-          echo "$PWD/$NAME" >> "$GITHUB_PATH"
+          echo "$PWD/$DIR" >> "$GITHUB_PATH"
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -63,8 +65,11 @@ jobs:
 
       - name: Install Zig 0.17.0
         run: |
-          curl -fsSL https://ziglang.org/download/0.17.0/zig-linux-x86_64-0.17.0.tar.xz | tar -xJ
-          echo "$PWD/zig-linux-x86_64-0.17.0" >> "$GITHUB_PATH"
+          URL=$(curl -fsSL https://ziglang.org/download/index.json \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['0.17.0']['x86_64-linux']['tarball'])")
+          curl -fsSL "$URL" | tar -xJ
+          DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.tar.xz').removesuffix('.tar.gz'))")
+          echo "$PWD/$DIR" >> "$GITHUB_PATH"
 
       - name: Fetch Zig Minisign public key
         id: minisig

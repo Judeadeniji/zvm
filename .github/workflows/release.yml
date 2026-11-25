@@ -30,8 +30,11 @@ jobs:
 
       - name: Install Zig 0.17.0
         run: |
-          curl -fsSL https://ziglang.org/download/0.17.0/zig-linux-x86_64-0.17.0.tar.xz | tar -xJ
-          echo "$PWD/zig-linux-x86_64-0.17.0" >> "$GITHUB_PATH"
+          URL=$(curl -fsSL https://ziglang.org/download/index.json \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['0.17.0']['x86_64-linux']['tarball'])")
+          curl -fsSL "$URL" | tar -xJ
+          DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.tar.xz').removesuffix('.tar.gz'))")
+          echo "$PWD/$DIR" >> "$GITHUB_PATH"
 
       - name: Fetch Zig Minisign public key
         id: minisig
