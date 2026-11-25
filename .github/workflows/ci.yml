@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: zig fmt --check src/
+
+      - name: Build and run tests
+        run: |
+          zig build
+          zig build test
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux
+          - aarch64-linux
+          - x86_64-macos
+          - aarch64-macos
+          - x86_64-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: Fetch Zig Minisign public key
+        id: minisig
+        run: |
+          KEY=$(curl -fsSL https://ziglang.org/download/ | grep -oE 'RW[A-Za-z0-9+/=]{54}' | head -n 1)
+          test -n "$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile standalone binary (${{ matrix.target }})
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe -Dminisig-key="${{ steps.minisig.outputs.key }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zvm-${{ matrix.target }}
+          path: zig-out/bin/

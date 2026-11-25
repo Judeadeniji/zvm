@@ -10,6 +10,7 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const Paths = @import("paths.zig").Paths;
 const Version = @import("version.zig").Version;
+const minisig = @import("minisig.zig");
 
 pub const index_url = "https://ziglang.org/download/index.json";
 
@@ -51,6 +52,8 @@ pub const ProgressCallback = struct {
 
 pub const InstallOptions = struct {
     force: bool = false,
+    verify_minisig: bool = true,
+    minisig_public_key: ?[]const u8 = null,
     progress: ?ProgressCallback = null,
 };
 
@@ -59,6 +62,7 @@ pub const InstallResult = struct {
     resolved_version: []const u8,
     install_dir: []const u8,
     already_installed: bool,
+    minisig_verified: bool = false,
 
     pub fn deinit(self: *InstallResult, allocator: Allocator) void {
         allocator.free(self.version);
@@ -497,6 +501,35 @@ pub fn extractArchive(
     try Io.Dir.rename(cwd, stage_path, cwd, dest_dir_path, io);
 }
 
+/// Fetches a `.minisig` signature file if available (`null` on HTTP 404 for older releases).
+pub fn fetchMinisigOptional(
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    tarball_url: []const u8,
+) !?[]u8 {
+    const sig_url = try allocator.print("{s}.minisig", .{tarball_url});
+    defer allocator.free(sig_url);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+
+    var client = try initHttpClient(io, allocator, arena_state.allocator(), environ_map);
+    defer client.deinit();
+
+    var body: Io.Writer.Allocating = .init(allocator);
+    defer body.deinit();
+
+    const res = try client.fetch(.{
+        .location = .{ .url = sig_url },
+        .response_writer = &body.writer,
+    });
+    if (res.status == .not_found) return null;
+    if (res.status != .ok) return error.HttpRequestFailed;
+
+    return try body.toOwnedSlice();
+}
+
 /// Downloads, verifies, and installs the requested Zig version into `paths.versions_dir`.
 pub fn installVersion(
     paths: *const Paths,
@@ -564,6 +597,26 @@ pub fn installVersion(
         };
     }
 
+    var minisig_verified = false;
+    if (options.verify_minisig) {
+        if (try fetchMinisigOptional(io, allocator, environ_map, artifact.tarball)) |sig_text| {
+            defer allocator.free(sig_text);
+            const pubkey_text = try minisig.resolvePublicKeyText(
+                paths,
+                io,
+                allocator,
+                environ_map,
+                options.minisig_public_key,
+            );
+            defer allocator.free(pubkey_text);
+            minisig.verifyFile(io, allocator, cache_path, sig_text, pubkey_text) catch |err| {
+                Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+                return err;
+            };
+            minisig_verified = true;
+        }
+    }
+
     try extractArchive(io, allocator, cache_path, install_dir);
     try paths.writeVersionMeta(io, allocator, version_key, artifact.resolved_version);
 
@@ -572,6 +625,7 @@ pub fn installVersion(
         .resolved_version = try allocator.dupe(u8, artifact.resolved_version),
         .install_dir = install_dir,
         .already_installed = false,
+        .minisig_verified = minisig_verified,
     };
 }
 

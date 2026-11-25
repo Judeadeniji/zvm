@@ -7,6 +7,7 @@ const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
 const Paths = @import("paths.zig").Paths;
 const resolver = @import("resolver.zig");
+const downloader = @import("downloader.zig");
 
 pub const Router = struct {
     paths: *const Paths,
@@ -69,6 +70,50 @@ pub const Router = struct {
         w.flush() catch {};
     }
 
+    /// Checks whether auto-install is enabled via `ZVM_AUTO_INSTALL` or `<base_dir>/auto-install`.
+    pub fn isAutoInstallEnabled(paths: *const Paths, io: Io, environ_map: ?*const EnvironMap) bool {
+        if (environ_map) |env| {
+            if (env.get("ZVM_AUTO_INSTALL")) |raw| {
+                const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+                if (std.ascii.eqlIgnoreCase(trimmed, "1") or
+                    std.ascii.eqlIgnoreCase(trimmed, "true") or
+                    std.ascii.eqlIgnoreCase(trimmed, "yes"))
+                {
+                    return true;
+                }
+                if (std.ascii.eqlIgnoreCase(trimmed, "0") or
+                    std.ascii.eqlIgnoreCase(trimmed, "false") or
+                    std.ascii.eqlIgnoreCase(trimmed, "no"))
+                {
+                    return false;
+                }
+            }
+        }
+
+        const flag_path = std.fs.path.join(paths.allocator, &.{ paths.base_dir, "auto-install" }) catch return false;
+        defer paths.allocator.free(flag_path);
+        Io.Dir.cwd().access(io, flag_path, .{}) catch return false;
+        return true;
+    }
+
+    fn printStderr(io: Io, comptime fmt: []const u8, args: anytype) void {
+        var err_buf: [512]u8 = undefined;
+        var err_writer = Io.File.Writer.init(.stderr(), io, &err_buf);
+        const w = &err_writer.interface;
+        _ = w.print(fmt, args) catch {};
+        w.flush() catch {};
+    }
+
+    fn autoInstallAndWait(self: *const Router, version: []const u8) bool {
+        printStderr(self.io, "[zvm] Auto-installing Zig {s}...\n", .{version});
+        var res = downloader.installVersion(self.paths, self.io, self.allocator, self.environ_map, version, .{}) catch |err| {
+            printStderr(self.io, "error: Auto-install failed for Zig '{s}': {s}\n", .{ version, @errorName(err) });
+            return false;
+        };
+        res.deinit(self.allocator);
+        return true;
+    }
+
     /// Resolves the required Zig version for `current_dir` and delegates execution to
     /// the target Zig compiler binary, forwarding all arguments and exit status.
     pub fn routeAndExec(
@@ -76,45 +121,45 @@ pub const Router = struct {
         current_dir: []const u8,
         passthrough_args: []const []const u8,
     ) !noreturn {
-        const resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
-            var err_buf: [256]u8 = undefined;
-            var err_writer = Io.File.Writer.init(.stderr(), self.io, &err_buf);
-            const w = &err_writer.interface;
+        const auto_install = isAutoInstallEnabled(self.paths, self.io, self.environ_map);
 
-            switch (err) {
-                error.NoCompatibleVersionInstalled => {
-                    _ = w.write("error: No installed Zig version satisfies project minimum requirement in build.zig.zon.\n") catch {};
-                    _ = w.write("hint: Run 'zvm list-remote' to check available releases, then 'zvm install <version>'.\n") catch {};
-                },
-                error.NoVersionConfigured => {
-                    _ = w.write("error: No Zig version configured for current project or global default.\n") catch {};
-                    _ = w.write("hint: Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n") catch {};
-                },
-                else => {
-                    _ = w.print("error: Failed to resolve Zig version: {s}\n", .{@errorName(err)}) catch {};
-                },
-            }
-            w.flush() catch {};
-            std.process.exit(1);
+        const target_version: []u8 = blk: {
+            var resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
+                if (err == error.NoCompatibleVersionInstalled and auto_install) {
+                    if (try resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir)) |min_ver| {
+                        errdefer self.allocator.free(min_ver);
+                        if (!self.autoInstallAndWait(min_ver)) std.process.exit(1);
+                        break :blk min_ver;
+                    }
+                }
+                switch (err) {
+                    error.NoCompatibleVersionInstalled => {
+                        printStderr(self.io, "error: No installed Zig version satisfies project minimum requirement in build.zig.zon.\nhint: Run 'zvm list-remote' to check available releases, then 'zvm install <version>'.\n", .{});
+                    },
+                    error.NoVersionConfigured => {
+                        printStderr(self.io, "error: No Zig version configured for current project or global default.\nhint: Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n", .{});
+                    },
+                    else => {
+                        printStderr(self.io, "error: Failed to resolve Zig version: {s}\n", .{@errorName(err)});
+                    },
+                }
+                std.process.exit(1);
+            };
+            defer resolved.deinit(self.allocator);
+            break :blk try self.allocator.dupe(u8, resolved.version);
         };
-        defer {
-            var r = resolved;
-            r.deinit(self.allocator);
+        defer self.allocator.free(target_version);
+
+        if (!self.paths.isVersionInstalled(self.io, self.allocator, target_version)) {
+            if (!auto_install or !self.autoInstallAndWait(target_version)) {
+                if (!auto_install) {
+                    printStderr(self.io, "error: Zig version '{s}' is not installed.\nhint: Run 'zvm install {s}' to install it.\n", .{ target_version, target_version });
+                }
+                std.process.exit(1);
+            }
         }
 
-        // Check if version is installed
-        if (!self.paths.isVersionInstalled(self.io, self.allocator, resolved.version)) {
-            var err_buf: [256]u8 = undefined;
-            var err_writer = Io.File.Writer.init(.stderr(), self.io, &err_buf);
-            const w = &err_writer.interface;
-
-            _ = w.print("error: Zig version '{s}' is not installed.\n", .{resolved.version}) catch {};
-            _ = w.print("hint: Run 'zvm install {s}' to install it.\n", .{resolved.version}) catch {};
-            w.flush() catch {};
-            std.process.exit(1);
-        }
-
-        const target_bin = try self.paths.versionZigBin(self.allocator, resolved.version);
+        const target_bin = try self.paths.versionZigBin(self.allocator, target_version);
         defer self.allocator.free(target_bin);
 
         // Construct argv: [target_bin, arg1, arg2, ...]
@@ -164,4 +209,35 @@ test "termToExitCode and spawnAndWait propagation" {
         const fail_code = try Router.spawnAndWait(io, &.{ "/bin/sh", "-c", "exit 7" }, null);
         try std.testing.expectEqual(7, fail_code);
     }
+}
+
+test "isAutoInstallEnabled checks ZVM_AUTO_INSTALL and auto-install marker" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    try std.testing.expect(!Router.isAutoInstallEnabled(&paths, io, null));
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("ZVM_AUTO_INSTALL", "1");
+    try std.testing.expect(Router.isAutoInstallEnabled(&paths, io, &env));
+
+    // Explicit env "false" overrides marker file
+    const marker = try std.fs.path.join(allocator, &.{ paths.base_dir, "auto-install" });
+    defer allocator.free(marker);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = marker, .data = "" });
+    try std.testing.expect(Router.isAutoInstallEnabled(&paths, io, null));
+
+    try env.put("ZVM_AUTO_INSTALL", "false");
+    try std.testing.expect(!Router.isAutoInstallEnabled(&paths, io, &env));
 }

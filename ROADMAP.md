@@ -72,13 +72,13 @@ This document outlines the development phases, architecture milestones, and plan
 
 ## Phase 5: Hardening & Advanced Features
 
-- [ ] **Minisig Signature Verification**
-  - Cryptographic signature check for official releases.
-- [ ] **Auto-Install Option**
-  - Optional flag / config to prompt or auto-install missing versions when entering a project.
-- [ ] **Shell Integration**
-  - Shell completions for Bash, Zsh, Fish, and PowerShell.
-  - Automatic environment hook for instant subshell version switching.
-- [ ] **CI & Cross-Platform Distribution**
-  - GitHub Actions CI matrix building for Linux (x86_64, aarch64), macOS (Apple Silicon, Intel), and Windows (x86_64).
-  - Standalone single-binary distribution.
+- [x] **Minisig Signature Verification** (`src/minisig.zig`, `src/downloader.zig`)
+  - [x] Cryptographic `Ed25519` + `BLAKE2b-512` signature check for official releases (`-Dminisig-key`, `--minisig-key`, `ZVM_MINISIG_PUBLIC_KEY`, `~/.zvm/minisig.pub`).
+- [x] **Auto-Install Option** (`src/router.zig`)
+  - [x] `ZVM_AUTO_INSTALL` / `~/.zvm/auto-install` support to install missing versions automatically when `zig` is invoked.
+- [x] **Shell Integration** (`src/cli/completions.zig`, `src/cli/env.zig`)
+  - [x] Shell completions for Bash, Zsh, Fish, and PowerShell (`zvm completions`).
+  - [x] Automatic environment hook and `PATH` setup (`zvm env`).
+- [x] **CI & Cross-Platform Distribution** (`.github/workflows/ci.yml`)
+  - [x] GitHub Actions CI matrix building and testing across Linux, macOS, and Windows.
+  - [x] Standalone single-binary cross-compilation (`x86_64`/`aarch64` Linux & macOS, `x86_64` Windows) with build-time `-Dminisig-key` injection.

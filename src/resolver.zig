@@ -48,6 +48,33 @@ pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
     return val_start[0..end_quote];
 }
 
+/// Walks parent directories from `start_dir` to find `.minimum_zig_version` in `build.zig.zon`.
+pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []const u8) !?[]u8 {
+    var current_dir = try allocator.dupe(u8, start_dir);
+    defer allocator.free(current_dir);
+
+    const cwd = Io.Dir.cwd();
+    while (true) {
+        const zon_path = try std.fs.path.join(allocator, &.{ current_dir, "build.zig.zon" });
+        defer allocator.free(zon_path);
+
+        var zon_buf: [8192]u8 = undefined;
+        if (cwd.readFile(io, zon_path, &zon_buf)) |zon_bytes| {
+            if (parseMinimumZigVersionFromZon(zon_bytes)) |min_str| {
+                return try allocator.dupe(u8, min_str);
+            }
+        } else |_| {}
+
+        const parent = std.fs.path.dirname(current_dir);
+        if (parent == null or std.mem.eql(u8, parent.?, current_dir)) break;
+
+        const next_parent = try allocator.dupe(u8, parent.?);
+        allocator.free(current_dir);
+        current_dir = next_parent;
+    }
+    return null;
+}
+
 /// Find the highest installed version that satisfies the given constraint.
 pub fn findHighestMatchingInstalled(
     paths: *const Paths,

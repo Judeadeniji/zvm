@@ -28,6 +28,16 @@ pub fn build(b: *std.Build) void {
     // to our consumers. We must give it a name because a Zig package can expose
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
+    const minisig_key = b.option(
+        []const u8,
+        "minisig-key",
+        "Override built-in Zig Minisign public key at compile time",
+    ) orelse "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U";
+
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "minisig_public_key", minisig_key);
+    const options_mod = build_options.createModule();
+
     const zli_dep = b.dependency("zli", .{
         .target = target,
         .optimize = optimize,
@@ -39,6 +49,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "zli", .module = zli_mod },
+            .{ .name = "build_options", .module = options_mod },
         },
     });
 
