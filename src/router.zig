@@ -8,6 +8,7 @@ const EnvironMap = std.process.Environ.Map;
 const Paths = @import("paths.zig").Paths;
 const resolver = @import("resolver.zig");
 const downloader = @import("downloader.zig");
+const zls_downloader = @import("zls_downloader.zig");
 const ResolveError = @import("errors.zig").ResolveError;
 
 pub const Router = struct {
@@ -27,10 +28,19 @@ pub const Router = struct {
 
     /// Determines whether the program was invoked as the `zig` command shim (e.g. `zig build`, `zig test`).
     pub fn isZigShim(argv0: []const u8) bool {
+        return isToolShim(argv0, "zig", "zig.exe");
+    }
+
+    /// Determines whether the program was invoked as the `zls` language server shim.
+    pub fn isZlsShim(argv0: []const u8) bool {
+        return isToolShim(argv0, "zls", "zls.exe");
+    }
+
+    fn isToolShim(argv0: []const u8, posix_name: []const u8, win_name: []const u8) bool {
         // Handle both `/` and `\` regardless of host OS so path checks are uniform.
         const last_slash = std.mem.lastIndexOfAny(u8, argv0, "/\\");
         const base = if (last_slash) |idx| argv0[idx + 1 ..] else argv0;
-        return std.mem.eql(u8, base, "zig") or std.mem.eql(u8, base, "zig.exe");
+        return std.mem.eql(u8, base, posix_name) or std.mem.eql(u8, base, win_name);
     }
 
     /// Converts a child process termination status into a POSIX-compatible exit code.
@@ -160,7 +170,84 @@ pub const Router = struct {
         const target_bin = try self.paths.versionZigBin(self.allocator, target_version);
         defer self.allocator.free(target_bin);
 
-        // Construct argv: [target_bin, arg1, arg2, ...]
+        try self.execBinary(target_bin, passthrough_args);
+    }
+
+    /// Resolves the ZLS binary paired with the active Zig version (or `ZLS_PATH` / `zls-default`)
+    /// and delegates execution transparently.
+    pub fn routeAndExecZls(
+        self: *const Router,
+        current_dir: []const u8,
+        passthrough_args: []const []const u8,
+    ) !noreturn {
+        if (self.environ_map) |env| {
+            if (env.get("ZLS_PATH")) |zls_env| {
+                const trimmed = std.mem.trim(u8, zls_env, " \t\r\n");
+                if (trimmed.len > 0) {
+                    try self.execBinary(trimmed, passthrough_args);
+                }
+            }
+        }
+
+        const auto_install = isAutoInstallEnabled(self.paths, self.io, self.environ_map);
+
+        const target_zig_version: []u8 = blk: {
+            var resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
+                if (err == ResolveError.NoVersionConfigured) {
+                    if (try self.paths.readZlsDefaultVersion(self.io, self.allocator)) |zls_def| {
+                        break :blk zls_def;
+                    }
+                    printStderr(self.io, "error: No Zig or ZLS version configured.\nhint: Run 'zvm use <version>' and 'zvm zls install', or set ZLS_PATH.\n", .{});
+                    std.process.exit(1);
+                }
+                if (err == ResolveError.NoCompatibleVersionInstalled) {
+                    if (try resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir)) |min_ver| {
+                        break :blk min_ver;
+                    }
+                }
+                printStderr(self.io, "error: Failed to resolve Zig version for ZLS: {s}\n", .{@errorName(err)});
+                std.process.exit(1);
+            };
+            defer resolved.deinit(self.allocator);
+            break :blk try self.allocator.dupe(u8, resolved.version);
+        };
+        defer self.allocator.free(target_zig_version);
+
+        var chosen_version = try self.allocator.dupe(u8, target_zig_version);
+        defer self.allocator.free(chosen_version);
+
+        if (!self.paths.isZlsInstalled(self.io, self.allocator, chosen_version)) {
+            if (auto_install) {
+                printStderr(self.io, "[zvm] Auto-installing ZLS for Zig {s}...\n", .{chosen_version});
+                var res = zls_downloader.installZls(self.paths, self.io, self.allocator, self.environ_map, chosen_version, .{}) catch |err| {
+                    printStderr(self.io, "error: Auto-install failed for ZLS (Zig '{s}'): {s}\n", .{ chosen_version, @errorName(err) });
+                    std.process.exit(1);
+                };
+                res.deinit(self.allocator);
+            } else if (try self.paths.readZlsDefaultVersion(self.io, self.allocator)) |zls_def| {
+                self.allocator.free(chosen_version);
+                chosen_version = zls_def;
+                if (!self.paths.isZlsInstalled(self.io, self.allocator, chosen_version)) {
+                    printStderr(self.io, "error: ZLS for Zig '{s}' is not installed.\nhint: Run 'zvm zls install {s}' to install it.\n", .{ target_zig_version, target_zig_version });
+                    std.process.exit(1);
+                }
+            } else {
+                printStderr(self.io, "error: ZLS for Zig '{s}' is not installed.\nhint: Run 'zvm zls install {s}' to install it.\n", .{ chosen_version, chosen_version });
+                std.process.exit(1);
+            }
+        }
+
+        const target_bin = try self.paths.zlsVersionBin(self.allocator, chosen_version);
+        defer self.allocator.free(target_bin);
+
+        try self.execBinary(target_bin, passthrough_args);
+    }
+
+    fn execBinary(
+        self: *const Router,
+        target_bin: []const u8,
+        passthrough_args: []const []const u8,
+    ) !noreturn {
         var argv = try self.allocator.alloc([]const u8, passthrough_args.len + 1);
         defer self.allocator.free(argv);
 

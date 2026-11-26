@@ -177,8 +177,8 @@ fn initHttpClient(
     return client;
 }
 
-/// Fetches the official release metadata JSON from `https://ziglang.org/download/index.json`.
-pub fn fetchIndexJson(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) ![]u8 {
+/// Fetches an HTTP/HTTPS URL into an owned byte slice.
+pub fn fetchUrl(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap, url: []const u8) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
 
@@ -189,7 +189,7 @@ pub fn fetchIndexJson(io: Io, allocator: Allocator, environ_map: ?*const Environ
     defer body.deinit();
 
     const res = try client.fetch(.{
-        .location = .{ .url = index_url },
+        .location = .{ .url = url },
         .response_writer = &body.writer,
     });
     if (res.status != .ok) {
@@ -197,6 +197,11 @@ pub fn fetchIndexJson(io: Io, allocator: Allocator, environ_map: ?*const Environ
     }
 
     return try body.toOwnedSlice();
+}
+
+/// Fetches the official release metadata JSON from `https://ziglang.org/download/index.json`.
+pub fn fetchIndexJson(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) ![]u8 {
+    return fetchUrl(io, allocator, environ_map, index_url);
 }
 
 /// Looks up the release artifact for `version_key` (e.g., `"0.17.0"` or `"master"`) and `target_key`.
@@ -558,6 +563,42 @@ pub fn fetchMinisigOptional(
     return try body.toOwnedSlice();
 }
 
+/// Ensures the archive for `tarball` is cached in `paths.cache_dir` and matches `shasum`.
+/// Caller owns the returned cache path slice.
+pub fn ensureCachedArchive(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    tarball: []const u8,
+    shasum: []const u8,
+    size_str: []const u8,
+    progress: ?ProgressCallback,
+) ![]u8 {
+    const archive_name = std.fs.path.basename(tarball);
+    const cache_path = try std.fs.path.join(allocator, &.{ paths.cache_dir, archive_name });
+    errdefer allocator.free(cache_path);
+
+    const cache_valid = blk: {
+        verifyFileSha256(io, cache_path, shasum) catch break :blk false;
+        break :blk true;
+    };
+
+    if (!cache_valid) {
+        const expected_size: ?u64 = if (size_str.len > 0)
+            std.fmt.parseInt(u64, size_str, 10) catch null
+        else
+            null;
+        try downloadToFile(io, allocator, environ_map, tarball, cache_path, expected_size, progress);
+        verifyFileSha256(io, cache_path, shasum) catch |err| {
+            Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+            return err;
+        };
+    }
+
+    return cache_path;
+}
+
 /// Downloads, verifies, and installs the requested Zig version into `paths.versions_dir`.
 pub fn installVersion(
     paths: *const Paths,
@@ -603,27 +644,17 @@ pub fn installVersion(
         }
     }
 
-    const archive_name = std.fs.path.basename(artifact.tarball);
-    const cache_path = try std.fs.path.join(allocator, &.{ paths.cache_dir, archive_name });
+    const cache_path = try ensureCachedArchive(
+        paths,
+        io,
+        allocator,
+        environ_map,
+        artifact.tarball,
+        artifact.shasum,
+        artifact.size,
+        options.progress,
+    );
     defer allocator.free(cache_path);
-
-    // Re-use cached archive if its checksum already matches; otherwise re-download.
-    const cache_valid = blk: {
-        verifyFileSha256(io, cache_path, artifact.shasum) catch break :blk false;
-        break :blk true;
-    };
-
-    if (!cache_valid) {
-        const expected_size: ?u64 = if (artifact.size.len > 0)
-            std.fmt.parseInt(u64, artifact.size, 10) catch null
-        else
-            null;
-        try downloadToFile(io, allocator, environ_map, artifact.tarball, cache_path, expected_size, options.progress);
-        verifyFileSha256(io, cache_path, artifact.shasum) catch |err| {
-            Io.Dir.cwd().deleteFile(io, cache_path) catch {};
-            return err;
-        };
-    }
 
     var minisig_verified = false;
     if (options.verify_minisig) {

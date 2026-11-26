@@ -83,5 +83,11 @@ pub const CliError = error{
     UnsupportedShell,
 };
 
+pub const ZlsError = error{
+    ZlsVersionNotFound,
+    InvalidZlsResponse,
+    ZlsNotInstalled,
+};
+
 /// Combined domain error set across all `zvm` subsystems.
-pub const ZvmError = PathError || ConstraintParseError || ResolveError || ShimError || DownloadError || CliError;
+pub const ZvmError = PathError || ConstraintParseError || ResolveError || ShimError || DownloadError || CliError || ZlsError;

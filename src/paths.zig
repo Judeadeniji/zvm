@@ -15,12 +15,15 @@ pub const Paths = struct {
     allocator: Allocator,
     base_dir: []const u8,
     versions_dir: []const u8,
+    zls_versions_dir: []const u8,
     bin_dir: []const u8,
     cache_dir: []const u8,
     default_file: []const u8,
+    zls_default_file: []const u8,
 
     pub const is_windows = builtin.target.os.tag == .windows;
     pub const zig_exe_name = if (is_windows) "zig.exe" else "zig";
+    pub const zls_exe_name = if (is_windows) "zls.exe" else "zls";
 
     /// Resolves the zvm base directory for a given OS tag using environment overrides:
     /// 1. `custom_base` (if provided)
@@ -89,6 +92,9 @@ pub const Paths = struct {
         const versions = try std.fs.path.join(allocator, &.{ base, "versions" });
         errdefer allocator.free(versions);
 
+        const zls_versions = try std.fs.path.join(allocator, &.{ base, "zls-versions" });
+        errdefer allocator.free(zls_versions);
+
         const bin = try std.fs.path.join(allocator, &.{ base, "bin" });
         errdefer allocator.free(bin);
 
@@ -98,29 +104,37 @@ pub const Paths = struct {
         const default_f = try std.fs.path.join(allocator, &.{ base, "default" });
         errdefer allocator.free(default_f);
 
+        const zls_default_f = try std.fs.path.join(allocator, &.{ base, "zls-default" });
+        errdefer allocator.free(zls_default_f);
+
         return .{
             .allocator = allocator,
             .base_dir = base,
             .versions_dir = versions,
+            .zls_versions_dir = zls_versions,
             .bin_dir = bin,
             .cache_dir = cache,
             .default_file = default_f,
+            .zls_default_file = zls_default_f,
         };
     }
 
     pub fn deinit(self: *Paths) void {
         self.allocator.free(self.base_dir);
         self.allocator.free(self.versions_dir);
+        self.allocator.free(self.zls_versions_dir);
         self.allocator.free(self.bin_dir);
         self.allocator.free(self.cache_dir);
         self.allocator.free(self.default_file);
+        self.allocator.free(self.zls_default_file);
     }
 
-    /// Creates base, versions, bin, and cache directories if they don't exist.
+    /// Creates base, versions, zls-versions, bin, and cache directories if they don't exist.
     pub fn ensureDirs(self: *const Paths, io: Io) !void {
         const cwd = Io.Dir.cwd();
         try cwd.createDirPath(io, self.base_dir);
         try cwd.createDirPath(io, self.versions_dir);
+        try cwd.createDirPath(io, self.zls_versions_dir);
         try cwd.createDirPath(io, self.bin_dir);
         try cwd.createDirPath(io, self.cache_dir);
     }
@@ -235,6 +249,112 @@ pub const Paths = struct {
         defer self.allocator.free(payload);
         try cwd.writeFile(io, .{
             .sub_path = self.default_file,
+            .data = payload,
+        });
+    }
+
+    /// Returns path to the directory for a given ZLS-paired Zig version, e.g. ~/.zvm/zls-versions/0.17.0
+    pub fn zlsVersionDir(self: *const Paths, allocator: Allocator, zig_version: []const u8) ![]u8 {
+        return std.fs.path.join(allocator, &.{ self.zls_versions_dir, zig_version });
+    }
+
+    /// Returns path to the zls executable for a given Zig version, e.g. ~/.zvm/zls-versions/0.17.0/zls
+    pub fn zlsVersionBin(self: *const Paths, allocator: Allocator, zig_version: []const u8) ![]u8 {
+        const v_dir = try self.zlsVersionDir(allocator, zig_version);
+        defer allocator.free(v_dir);
+        return std.fs.path.join(allocator, &.{ v_dir, zls_exe_name });
+    }
+
+    /// Checks if ZLS is installed for the given Zig version.
+    pub fn isZlsInstalled(self: *const Paths, io: Io, allocator: Allocator, zig_version: []const u8) bool {
+        const bin_path = self.zlsVersionBin(allocator, zig_version) catch return false;
+        defer allocator.free(bin_path);
+        Io.Dir.cwd().access(io, bin_path, .{}) catch return false;
+        return true;
+    }
+
+    /// Returns path to the `zls` shim inside `~/.zvm/bin/`.
+    pub fn zlsShimPath(self: *const Paths, allocator: Allocator) ![]u8 {
+        return std.fs.path.join(allocator, &.{ self.bin_dir, zls_exe_name });
+    }
+
+    /// Returns a list of Zig version names that have a paired ZLS installed in `zls_versions_dir`.
+    pub fn listInstalledZlsVersions(self: *const Paths, io: Io, allocator: Allocator) ![][]u8 {
+        const cwd = Io.Dir.cwd();
+        var v_dir = cwd.openDir(io, self.zls_versions_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return try allocator.alloc([]u8, 0),
+            else => return err,
+        };
+        defer v_dir.close(io);
+
+        var list: std.ArrayList([]u8) = .empty;
+        errdefer {
+            for (list.items) |item| allocator.free(item);
+            list.deinit(allocator);
+        }
+
+        var it = v_dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (self.isZlsInstalled(io, allocator, entry.name)) {
+                try list.append(allocator, try allocator.dupe(u8, entry.name));
+            }
+        }
+
+        return try list.toOwnedSlice(allocator);
+    }
+
+    /// Reads the ZLS resolved version metadata (`.zls-version`) inside a ZLS version directory, if present.
+    pub fn readZlsVersionMeta(self: *const Paths, io: Io, allocator: Allocator, zig_version: []const u8) !?[]u8 {
+        const v_dir = try self.zlsVersionDir(allocator, zig_version);
+        defer allocator.free(v_dir);
+        const meta_path = try std.fs.path.join(allocator, &.{ v_dir, ".zls-version" });
+        defer allocator.free(meta_path);
+
+        var buf: [256]u8 = undefined;
+        const bytes = Io.Dir.cwd().readFile(io, meta_path, &buf) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+        if (trimmed.len == 0) return null;
+        return try allocator.dupe(u8, trimmed);
+    }
+
+    /// Writes the ZLS resolved version metadata (`.zls-version`) inside a ZLS version directory.
+    pub fn writeZlsVersionMeta(self: *const Paths, io: Io, allocator: Allocator, zig_version: []const u8, zls_version: []const u8) !void {
+        const v_dir = try self.zlsVersionDir(allocator, zig_version);
+        defer allocator.free(v_dir);
+        const meta_path = try std.fs.path.join(allocator, &.{ v_dir, ".zls-version" });
+        defer allocator.free(meta_path);
+
+        const payload = try allocator.print("{s}\n", .{zls_version});
+        defer allocator.free(payload);
+        try Io.Dir.cwd().writeFile(io, .{
+            .sub_path = meta_path,
+            .data = payload,
+        });
+    }
+
+    /// Reads the global default ZLS version (by paired Zig version) from `~/.zvm/zls-default`, or null if unset.
+    pub fn readZlsDefaultVersion(self: *const Paths, io: Io, allocator: Allocator) !?[]u8 {
+        const cwd = Io.Dir.cwd();
+        var buf: [256]u8 = undefined;
+        const bytes = cwd.readFile(io, self.zls_default_file, &buf) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+        if (trimmed.len == 0) return null;
+        return try allocator.dupe(u8, trimmed);
+    }
+
+    /// Sets the global default ZLS version (by paired Zig version) in `~/.zvm/zls-default`.
+    pub fn writeZlsDefaultVersion(self: *const Paths, io: Io, zig_version: []const u8) !void {
+        try self.ensureDirs(io);
+        const payload = try self.allocator.print("{s}\n", .{zig_version});
+        defer self.allocator.free(payload);
+        try Io.Dir.cwd().writeFile(io, .{
+            .sub_path = self.zls_default_file,
             .data = payload,
         });
     }

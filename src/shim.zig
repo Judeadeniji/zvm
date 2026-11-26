@@ -10,6 +10,25 @@ const Paths = @import("paths.zig").Paths;
 
 pub const ShimError = errors.ShimError;
 
+pub const ToolKind = enum {
+    zig,
+    zls,
+
+    pub fn exeName(self: ToolKind) []const u8 {
+        return switch (self) {
+            .zig => Paths.zig_exe_name,
+            .zls => Paths.zls_exe_name,
+        };
+    }
+
+    pub fn shimPath(self: ToolKind, paths: *const Paths, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .zig => paths.zigShimPath(allocator),
+            .zls => paths.zlsShimPath(allocator),
+        };
+    }
+};
+
 pub const ShimStatus = union(enum) {
     missing,
     valid: []const u8,
@@ -75,7 +94,18 @@ pub fn inspectShim(
     allocator: Allocator,
     expected_exe: ?[]const u8,
 ) (Allocator.Error || Io.Dir.ReadLinkError || Io.Dir.AccessError)!ShimStatus {
-    const shim_path = try paths.zigShimPath(allocator);
+    return inspectShimFor(paths, io, allocator, .zig, expected_exe);
+}
+
+/// Inspects a managed shim (`zig` or `zls`) inside `~/.zvm/bin/` and returns its status.
+pub fn inspectShimFor(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    tool: ToolKind,
+    expected_exe: ?[]const u8,
+) (Allocator.Error || Io.Dir.ReadLinkError || Io.Dir.AccessError)!ShimStatus {
+    const shim_path = try tool.shimPath(paths, allocator);
     defer allocator.free(shim_path);
 
     const cwd = Io.Dir.cwd();
@@ -128,15 +158,27 @@ pub fn setupShim(
     zvm_exe: []const u8,
     force: bool,
 ) SetupShimError!SetupResult {
+    return setupShimFor(paths, io, allocator, .zig, zvm_exe, force);
+}
+
+/// Creates or updates a managed shim (`zig` or `zls`) in `paths.bin_dir` pointing to `zvm_exe`.
+pub fn setupShimFor(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    tool: ToolKind,
+    zvm_exe: []const u8,
+    force: bool,
+) SetupShimError!SetupResult {
     try paths.ensureDirs(io);
 
-    const shim_path = try paths.zigShimPath(allocator);
+    const shim_path = try tool.shimPath(paths, allocator);
     errdefer allocator.free(shim_path);
 
     const target_copy = try allocator.dupe(u8, zvm_exe);
     errdefer allocator.free(target_copy);
 
-    var status = try inspectShim(paths, io, allocator, zvm_exe);
+    var status = try inspectShimFor(paths, io, allocator, tool, zvm_exe);
     defer status.deinit(allocator);
 
     const outcome: SetupOutcome = switch (status) {
@@ -185,6 +227,17 @@ pub fn checkPathOrder(
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
 ) Allocator.Error!PathCheck {
+    return checkPathOrderFor(paths, io, allocator, environ_map, .zig);
+}
+
+/// Inspects `PATH` to verify whether `paths.bin_dir` takes precedence for `tool` (`zig` or `zls`).
+pub fn checkPathOrderFor(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    tool: ToolKind,
+) Allocator.Error!PathCheck {
     const path_env = if (environ_map) |env| (env.get("PATH") orelse "") else "";
     if (path_env.len == 0) {
         return .{
@@ -215,7 +268,7 @@ pub fn checkPathOrder(
         }
 
         if (first_zig_dir == null) {
-            const candidate = try std.fs.path.join(allocator, &.{ raw_entry, Paths.zig_exe_name });
+            const candidate = try std.fs.path.join(allocator, &.{ raw_entry, tool.exeName() });
             defer allocator.free(candidate);
 
             if (cwd.access(io, candidate, .{ .execute = !Paths.is_windows })) {
@@ -391,4 +444,31 @@ test "checkPathOrder detects precedence and shadowing" {
     try std.testing.expect(check2.bin_dir_in_path);
     try std.testing.expect(check2.shim_takes_precedence);
     try std.testing.expectEqualStrings(paths.bin_dir, check2.first_zig_dir.?);
+}
+
+test "setupShimFor creates and inspects zls shim" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+
+    const fake_zvm = try std.fs.path.join(allocator, &.{ tmp_path, "zvm" });
+    defer allocator.free(fake_zvm);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake_zvm, .data = "fake-zvm" });
+
+    var res = try setupShimFor(&paths, io, allocator, .zls, fake_zvm, false);
+    defer res.deinit(allocator);
+    try std.testing.expectEqual(SetupOutcome.created, res.outcome);
+    try std.testing.expect(std.mem.endsWith(u8, res.shim_path, Paths.zls_exe_name));
+
+    var status = try inspectShimFor(&paths, io, allocator, .zls, fake_zvm);
+    defer status.deinit(allocator);
+    try std.testing.expect(status == .valid);
 }
