@@ -139,6 +139,18 @@ zvm config auto-install on
 
 *(Or pass `--auto-install` to `zvm env <shell> --auto-install`, or set `ZVM_AUTO_INSTALL=1`.)*
 
+### ZLS & Editor Integration
+
+`zvm` can install and route **ZLS** (the Zig Language Server) automatically alongside your active Zig version:
+
+```bash
+zvm install 0.17.0 --with-zls   # Install Zig + compatible ZLS together
+zvm zls install                 # Or install ZLS for the current project's Zig
+zvm env --editor vscode         # Print config for vscode, nvim, helix, emacs, or zed
+```
+
+Editor setup guides: [VS Code](docs/editors/vscode.md) · [Neovim](docs/editors/neovim.md) · [Helix](docs/editors/helix.md) · [Emacs](docs/editors/emacs.md) · [Zed](docs/editors/zed.md)
+
 ---
 
 ## Command Reference
@@ -157,7 +169,8 @@ zvm config auto-install on
 | `zvm setup [--force]` | Create or repair the `zig` shim (alias: `shim`) |
 | `zvm doctor [--exact]` | Check directories, shim health, and `PATH` order |
 | `zvm clean [--dry-run]` | Delete cached download archives |
-| `zvm env <shell> [--auto-install]` | Print shell `PATH` and directory-hook snippet |
+| `zvm env <shell> [--auto-install]` | Print shell `PATH` and directory-hook snippet (or `--editor <name>` for ZLS config) |
+| `zvm zls <subcommand>` | Manage ZLS paired to Zig (`install`, `update`, `list`, `use`, `which`, `uninstall`) |
 | `zvm completions <shell>` | Print tab-completion script (`bash`, `zsh`, `fish`, `powershell`) |
 
 ---

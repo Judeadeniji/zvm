@@ -40,7 +40,8 @@
   - `src/shim.zig`: Creates/inspects the `zig` shim symlink/binary and checks `PATH` precedence.
   - `src/minisig.zig`: Minisign (`Ed25519` + `BLAKE2b-512`) signature verification and public key resolution.
   - `src/downloader.zig`: Release metadata fetching, downloading, SHA-256 integrity verification, and archive extraction.
-  - `src/cli/`: CLI subcommands are modularized into dedicated files (e.g., `src/cli/install.zig`, `src/cli/use.zig`, `src/cli/pin.zig`, `src/cli/list.zig`, `src/cli/setup.zig`, `src/cli/doctor.zig`, `src/cli/clean.zig`, `src/cli/env.zig`, `src/cli/completions.zig`), while `src/main.zig` and `src/cli/root.zig` wire the entrypoint and command tree.
+  - `src/zls_downloader.zig`: ZLS release discovery (`releases.zigtools.org`), SHA-256 verification, and paired extraction.
+  - `src/cli/`: CLI subcommands are modularized into dedicated files (e.g., `src/cli/install.zig`, `src/cli/use.zig`, `src/cli/pin.zig`, `src/cli/list.zig`, `src/cli/setup.zig`, `src/cli/doctor.zig`, `src/cli/clean.zig`, `src/cli/config.zig`, `src/cli/env.zig`, `src/cli/completions.zig`, `src/cli/zls.zig`), while `src/main.zig` and `src/cli/root.zig` wire the entrypoint and command tree.
 
 ## Zig 0.17.0 API & Idioms (from `.agents/skills/zig-0-17`)
 

