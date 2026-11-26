@@ -78,16 +78,50 @@ fn exactEnabled(paths: *const Paths, io: Io, options: ResolveOptions, environ_ma
 }
 
 /// Parse the `.minimum_zig_version` string from a `build.zig.zon` buffer.
+///
+/// Commented-out declarations are ignored, so a stale `// .minimum_zig_version`
+/// line never wins over the real field (or substitutes for a missing one).
 pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
     const key = ".minimum_zig_version";
-    const idx = std.mem.indexOf(u8, content, key) orelse return null;
-    const rest = content[idx + key.len ..];
-    const eq_idx = std.mem.indexOfScalar(u8, rest, '=') orelse return null;
-    const after_eq = rest[eq_idx + 1 ..];
-    const quote_idx = std.mem.indexOfScalar(u8, after_eq, '"') orelse return null;
-    const val_start = after_eq[quote_idx + 1 ..];
-    const end_quote = std.mem.indexOfScalar(u8, val_start, '"') orelse return null;
-    return val_start[0..end_quote];
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |raw_line| {
+        const line = stripLineComment(raw_line);
+        const idx = std.mem.indexOf(u8, line, key) orelse continue;
+
+        const rest = std.mem.trimStart(u8, line[idx + key.len ..], " \t");
+        if (rest.len == 0 or rest[0] != '=') continue;
+
+        const after_eq = std.mem.trimStart(u8, rest[1..], " \t");
+        if (after_eq.len == 0 or after_eq[0] != '"') continue;
+
+        const val_start = after_eq[1..];
+        const end_quote = std.mem.indexOfScalar(u8, val_start, '"') orelse continue;
+        return val_start[0..end_quote];
+    }
+    return null;
+}
+
+/// Drops a trailing `//` comment from a manifest line, ignoring `//` inside a
+/// quoted string.
+fn stripLineComment(line: []const u8) []const u8 {
+    var in_string = false;
+    var i: usize = 0;
+    while (i < line.len) : (i += 1) {
+        const c = line[i];
+        if (in_string) {
+            if (c == '\\') {
+                i += 1;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if (c == '/' and i + 1 < line.len and line[i + 1] == '/') {
+            return line[0..i];
+        }
+    }
+    return line;
 }
 
 /// Upper bound for reading `build.zig.zon`; manifests with many dependencies can
@@ -317,6 +351,26 @@ test "parseMinimumZigVersionFromZon" {
     const min_v = parseMinimumZigVersionFromZon(zon);
     try std.testing.expect(min_v != null);
     try std.testing.expectEqualStrings("0.17.0", min_v.?);
+}
+
+test "parseMinimumZigVersionFromZon ignores commented-out declarations" {
+    const zon =
+        \\.{
+        \\    .name = .zvm,
+        \\    // .minimum_zig_version = "0.10.0",
+        \\    .version = "0.0.0",
+        \\    .minimum_zig_version = "0.17.0",
+        \\}
+    ;
+    try std.testing.expectEqualStrings("0.17.0", parseMinimumZigVersionFromZon(zon).?);
+
+    const only_commented =
+        \\.{
+        \\    // .minimum_zig_version = "0.10.0",
+        \\    .name = .zvm,
+        \\}
+    ;
+    try std.testing.expectEqual(@as(?[]const u8, null), parseMinimumZigVersionFromZon(only_commented));
 }
 
 test "resolve hierarchy env override" {
