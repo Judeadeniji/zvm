@@ -20,6 +20,7 @@ const uninstall_cmd = @import("uninstall.zig");
 const setup_cmd = @import("setup.zig");
 const doctor_cmd = @import("doctor.zig");
 const clean_cmd = @import("clean.zig");
+const config_cmd = @import("config.zig");
 const env_cmd = @import("env.zig");
 const completions_cmd = @import("completions.zig");
 
@@ -48,6 +49,7 @@ pub fn buildRootCommand(init_options: zli.InitOptions) zli.CommandSetupErrors!*z
         setup_cmd.command,
         doctor_cmd.command,
         clean_cmd.command,
+        config_cmd.command,
         env_cmd.command,
         completions_cmd.command,
     };
@@ -171,6 +173,7 @@ test "buildRootCommand registers expected subcommands" {
         "setup",
         "doctor",
         "clean",
+        "config",
         "env",
         "completions",
     };
@@ -184,6 +187,7 @@ test "buildRootCommand registers expected subcommands" {
     }
     try std.testing.expect(root.findCommand("shim") != null);
     _ = clean_cmd;
+    _ = config_cmd;
     _ = env_cmd;
     _ = completions_cmd;
 }
