@@ -343,5 +343,13 @@ fn handleUninstall(ctx: zli.CommandContext) !void {
     }
 
     try Io.Dir.cwd().deleteTree(ctx.io, v_dir);
+
+    // Do not leave the global ZLS fallback pointing at a version that no longer exists.
+    const zls_default = try app.paths.readZlsDefaultVersion(ctx.io, ctx.allocator);
+    defer if (zls_default) |d| ctx.allocator.free(d);
+    if (zls_default != null and std.mem.eql(u8, zls_default.?, canonical)) {
+        try app.paths.clearZlsDefaultVersion(ctx.io);
+    }
+
     try app.reporter.success("Uninstalled ZLS for Zig {s}.\n", .{canonical});
 }

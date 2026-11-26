@@ -25,6 +25,8 @@ const UninstallError = zvm.errors.CliError ||
     std.Io.Writer.Error ||
     Io.Dir.AccessError ||
     Io.Dir.DeleteTreeError ||
+    Io.Dir.DeleteFileError ||
+    Io.Dir.ReadFileError ||
     report.Reported;
 
 fn handle(ctx: zli.CommandContext) UninstallError!void {
@@ -53,5 +55,23 @@ fn handle(ctx: zli.CommandContext) UninstallError!void {
     };
 
     try cwd.deleteTree(ctx.io, v_dir);
+
+    // Do not leave the global default (or ZLS fallback) pointing at a version that no longer exists.
+    const default_ver = try app.paths.readDefaultVersion(ctx.io, ctx.allocator);
+    defer if (default_ver) |d| ctx.allocator.free(d);
+    if (default_ver != null and std.mem.eql(u8, default_ver.?, canonical)) {
+        try app.paths.clearDefaultVersion(ctx.io);
+    }
+
+    const zls_default = try app.paths.readZlsDefaultVersion(ctx.io, ctx.allocator);
+    defer if (zls_default) |d| ctx.allocator.free(d);
+    if (zls_default != null and std.mem.eql(u8, zls_default.?, canonical)) {
+        try app.paths.clearZlsDefaultVersion(ctx.io);
+    }
+
     try app.reporter.success("Uninstalled Zig {s}.\n", .{canonical});
+
+    if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+        try app.reporter.muted("ZLS for Zig {s} is still installed; run 'zvm zls uninstall {s}' to remove it.\n", .{ canonical, canonical });
+    }
 }

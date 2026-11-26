@@ -253,6 +253,22 @@ pub const Paths = struct {
         });
     }
 
+    /// Removes the global default version file, if present.
+    pub fn clearDefaultVersion(self: *const Paths, io: Io) !void {
+        Io.Dir.cwd().deleteFile(io, self.default_file) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+    }
+
+    /// Removes the global default ZLS version file, if present.
+    pub fn clearZlsDefaultVersion(self: *const Paths, io: Io) !void {
+        Io.Dir.cwd().deleteFile(io, self.zls_default_file) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+    }
+
     /// Returns path to the directory for a given ZLS-paired Zig version, e.g. ~/.zvm/zls-versions/0.17.0
     pub fn zlsVersionDir(self: *const Paths, allocator: Allocator, zig_version: []const u8) ![]u8 {
         return std.fs.path.join(allocator, &.{ self.zls_versions_dir, zig_version });
@@ -429,6 +445,12 @@ test "Paths read and write default version" {
     try std.testing.expect(read_back != null);
     defer allocator.free(read_back.?);
     try std.testing.expectEqualStrings("0.17.0", read_back.?);
+
+    // Clearing is idempotent and leaves no stale default behind.
+    try paths.clearDefaultVersion(io);
+    try paths.clearDefaultVersion(io);
+    const cleared = try paths.readDefaultVersion(io, allocator);
+    try std.testing.expectEqual(@as(?[]u8, null), cleared);
 }
 
 test "resolveBaseDirForOs platform discovery" {
