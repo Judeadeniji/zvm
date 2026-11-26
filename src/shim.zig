@@ -62,6 +62,12 @@ fn pathsEqual(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, trimTrailingSeps(a), trimTrailingSeps(b));
 }
 
+pub fn isZvmExePath(target: []const u8) bool {
+    const last_slash = std.mem.lastIndexOfAny(u8, target, "/\\");
+    const base = if (last_slash) |idx| target[idx + 1 ..] else target;
+    return std.mem.eql(u8, base, "zvm") or std.mem.eql(u8, base, "zvm.exe");
+}
+
 /// Inspects `~/.zvm/bin/zig` (or `zig.exe`) and returns its current status.
 pub fn inspectShim(
     paths: *const Paths,
@@ -99,12 +105,8 @@ pub fn inspectShim(
         if (!std.mem.eql(u8, target, expected)) {
             return .{ .wrong_target = try allocator.dupe(u8, target) };
         }
-    } else {
-        const last_slash = std.mem.lastIndexOfAny(u8, target, "/\\");
-        const base = if (last_slash) |idx| target[idx + 1 ..] else target;
-        if (!std.mem.eql(u8, base, "zvm") and !std.mem.eql(u8, base, "zvm.exe")) {
-            return .{ .wrong_target = try allocator.dupe(u8, target) };
-        }
+    } else if (!isZvmExePath(target)) {
+        return .{ .wrong_target = try allocator.dupe(u8, target) };
     }
 
     return .{ .valid = try allocator.dupe(u8, target) };
@@ -278,6 +280,56 @@ test "setupShim creates, detects, and updates symlink" {
     var res2 = try setupShim(&paths, io, allocator, fake_zvm, false);
     defer res2.deinit(allocator);
     try std.testing.expectEqual(SetupOutcome.already_configured, res2.outcome);
+}
+
+test "inspectShim without an expected executable accepts any zvm target" {
+    if (Paths.is_windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(rel_tmp_path);
+    const tmp_path = try Io.Dir.cwd().realPathFileAlloc(io, rel_tmp_path, allocator);
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+
+    const fake_zvm = try std.fs.path.join(allocator, &.{ tmp_path, "zvm" });
+    defer allocator.free(fake_zvm);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake_zvm, .data = "fake-zvm" });
+
+    var setup = try setupShim(&paths, io, allocator, fake_zvm, false);
+    defer setup.deinit(allocator);
+    try Io.Dir.cwd().access(io, setup.shim_path, .{});
+
+    // A shim pointing at any executable named `zvm` is healthy, even when it is
+    // not the exact binary running `zvm doctor`.
+    var valid = try inspectShim(&paths, io, allocator, null);
+    defer valid.deinit(allocator);
+    switch (valid) {
+        .valid => |target| try std.testing.expectEqualStrings(fake_zvm, target),
+        else => return error.TestUnexpectedResult,
+    }
+
+    // A symlink to something that is not a zvm executable is still suspicious.
+    const fake_other = try std.fs.path.join(allocator, &.{ tmp_path, "other" });
+    defer allocator.free(fake_other);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = fake_other, .data = "not-zvm" });
+
+    var replaced = try setupShim(&paths, io, allocator, fake_other, true);
+    defer replaced.deinit(allocator);
+
+    var wrong = try inspectShim(&paths, io, allocator, null);
+    defer wrong.deinit(allocator);
+    switch (wrong) {
+        .wrong_target => |target| try std.testing.expectEqualStrings(fake_other, target),
+        else => return error.TestUnexpectedResult,
+    }
 }
 
 test "checkPathOrder detects precedence and shadowing" {

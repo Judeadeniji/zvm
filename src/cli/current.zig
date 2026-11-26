@@ -3,12 +3,15 @@
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
-    return zli.Command.init(init_options, .{
+    const cmd = try zli.Command.init(init_options, .{
         .name = "current",
         .description = "Show the currently active Zig version for the current directory",
     }, handle);
+    try cmd.addFlag(flags.exact);
+    return cmd;
 }
 
 fn sourceLabel(source: zvm.ResolutionSource) []const u8 {
@@ -23,35 +26,35 @@ fn sourceLabel(source: zvm.ResolutionSource) []const u8 {
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
 
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch |err| switch (err) {
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch |err| switch (err) {
         zvm.errors.ResolveError.NoVersionConfigured => {
-            try ctx.writer.writeAll("No Zig version configured.\n");
-            try ctx.writer.writeAll("hint: Run 'zvm use <version>' or 'zvm pin <version>'.\n");
-            return;
+            try app.reporter.fail("No Zig version is configured.\n", .{});
+            try app.reporter.hint("Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n", .{});
+            return error.Reported;
         },
         zvm.errors.ResolveError.NoCompatibleVersionInstalled => {
-            try ctx.writer.writeAll("error: No installed Zig version satisfies minimum_zig_version in build.zig.zon.\n");
-            return zvm.errors.ResolveError.NoCompatibleVersionInstalled;
+            try app.reporter.fail("No installed Zig version satisfies minimum_zig_version in build.zig.zon.\n", .{});
+            try app.reporter.hint("Run 'zvm install <version>' to install a compatible release.\n", .{});
+            return error.Reported;
         },
         else => return err,
     };
     defer resolved.deinit(ctx.allocator);
 
     const installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version);
-    const status = if (installed) "installed" else "not installed";
 
-    if (resolved.source_path) |path| {
-        try ctx.writer.print("{s} ({s}, from {s}: {s})\n", .{
-            resolved.version,
-            status,
-            sourceLabel(resolved.source),
-            path,
-        });
+    try app.reporter.version(resolved.version);
+    try ctx.writer.writeAll(" (");
+    if (installed) {
+        try app.reporter.successText("installed");
     } else {
-        try ctx.writer.print("{s} ({s}, from {s})\n", .{
-            resolved.version,
-            status,
-            sourceLabel(resolved.source),
-        });
+        try app.reporter.warnText("not installed");
+    }
+    if (resolved.source_path) |path| {
+        try ctx.writer.print(", from {s}: {s})\n", .{ sourceLabel(resolved.source), path });
+    } else {
+        try ctx.writer.print(", from {s})\n", .{sourceLabel(resolved.source)});
     }
 }

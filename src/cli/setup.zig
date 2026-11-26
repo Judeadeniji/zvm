@@ -4,6 +4,7 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const report = @import("report.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -32,39 +33,41 @@ fn handle(ctx: zli.CommandContext) !void {
         zvm.errors.ShimError.ShimAlreadyExists => {
             const shim_p = try app.paths.zigShimPath(ctx.allocator);
             defer ctx.allocator.free(shim_p);
-            try ctx.writer.print("error: '{s}' already exists and does not point to this zvm binary.\n", .{shim_p});
-            try ctx.writer.writeAll("hint: Re-run with '--force' to replace it.\n");
-            return err;
+            try app.reporter.fail("'{s}' already exists and does not point to this zvm binary.\n", .{shim_p});
+            try app.reporter.hint("Re-run with '--force' to replace it.\n", .{});
+            return error.Reported;
         },
         else => return err,
     };
     defer res.deinit(ctx.allocator);
 
     switch (res.outcome) {
-        .created => try ctx.writer.print("Created zig shim: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
-        .updated => try ctx.writer.print("Updated zig shim: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
-        .already_configured => try ctx.writer.print("Zig shim is already configured: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
+        .created => try app.reporter.success("Created zig shim: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
+        .updated => try app.reporter.success("Updated zig shim: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
+        .already_configured => try app.reporter.info("Zig shim is already configured: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
     }
 
     var path_check = try zvm.shim.checkPathOrder(app.paths, ctx.io, ctx.allocator, ctx.environ_map);
     defer path_check.deinit(ctx.allocator);
 
     if (!path_check.bin_dir_in_path) {
-        try ctx.writer.print("\nnote: '{s}' is not in your PATH.\n", .{app.paths.bin_dir});
-        try printPathHint(ctx.writer, app.paths.bin_dir);
+        try ctx.writer.writeByte('\n');
+        try app.reporter.note("'{s}' is not in your PATH.\n", .{app.paths.bin_dir});
+        try printPathHint(&app.reporter, app.paths.bin_dir);
     } else if (!path_check.shim_takes_precedence) {
-        try ctx.writer.print("\nwarning: Another zig binary in '{s}' shadows '{s}'.\n", .{
+        try ctx.writer.writeByte('\n');
+        try app.reporter.warn("Another zig binary in '{s}' shadows '{s}'.\n", .{
             path_check.first_zig_dir orelse "(unknown)",
             app.paths.bin_dir,
         });
-        try printPathHint(ctx.writer, app.paths.bin_dir);
+        try printPathHint(&app.reporter, app.paths.bin_dir);
     }
 }
 
-fn printPathHint(writer: *std.Io.Writer, bin_dir: []const u8) !void {
+fn printPathHint(reporter: *const report.Reporter, bin_dir: []const u8) !void {
     if (zvm.Paths.is_windows) {
-        try writer.print("Add '{s}' to the top of your user PATH environment variable.\n", .{bin_dir});
+        try reporter.muted("Add '{s}' to the top of your user PATH environment variable.\n", .{bin_dir});
     } else {
-        try writer.print("Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n  export PATH=\"{s}:$PATH\"\n", .{bin_dir});
+        try reporter.muted("Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n  export PATH=\"{s}:$PATH\"\n", .{bin_dir});
     }
 }

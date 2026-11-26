@@ -4,12 +4,15 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
-    return zli.Command.init(init_options, .{
+    const cmd = try zli.Command.init(init_options, .{
         .name = "list",
         .description = "List locally installed Zig versions",
     }, handle);
+    try cmd.addFlag(flags.exact);
+    return cmd;
 }
 
 fn lessThanVersion(_: void, a: []const u8, b: []const u8) bool {
@@ -25,14 +28,17 @@ fn handle(ctx: zli.CommandContext) !void {
     defer zvm.Paths.freeInstalledVersions(ctx.allocator, versions);
 
     if (versions.len == 0) {
-        try ctx.writer.writeAll("No Zig versions installed.\n");
+        try app.reporter.note("No Zig versions installed.\n", .{});
+        try app.reporter.tip("Run 'zvm install <version>' to install one.\n", .{});
         return;
     }
 
     std.mem.sort([]u8, versions, {}, lessThanVersion);
 
     var active_version: ?[]const u8 = null;
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch null;
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch null;
     defer if (resolved) |*r| r.deinit(ctx.allocator);
     if (resolved) |r| {
         active_version = r.version;
@@ -40,14 +46,20 @@ fn handle(ctx: zli.CommandContext) !void {
 
     for (versions) |ver| {
         const is_active = if (active_version) |act| std.mem.eql(u8, act, ver) else false;
-        const marker = if (is_active) "* " else "  ";
+        if (is_active) {
+            try app.reporter.active("* ");
+        } else {
+            try ctx.writer.writeAll("  ");
+        }
+        try app.reporter.version(ver);
+
         const meta = app.paths.readVersionMeta(ctx.io, ctx.allocator, ver) catch null;
         defer if (meta) |m| ctx.allocator.free(m);
 
         if (meta != null and !std.mem.eql(u8, meta.?, ver)) {
-            try ctx.writer.print("{s}{s} ({s})\n", .{ marker, ver, meta.? });
+            try ctx.writer.print(" ({s})\n", .{meta.?});
         } else {
-            try ctx.writer.print("{s}{s}\n", .{ marker, ver });
+            try ctx.writer.writeByte('\n');
         }
     }
 }

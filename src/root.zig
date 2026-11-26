@@ -13,6 +13,8 @@ pub const Constraint = version.Constraint;
 
 pub const resolver = @import("resolver.zig");
 pub const resolve = resolver.resolve;
+pub const resolveWithOptions = resolver.resolveWithOptions;
+pub const ResolveOptions = resolver.ResolveOptions;
 pub const ResolvedVersion = resolver.ResolvedVersion;
 pub const ResolutionSource = resolver.ResolutionSource;
 

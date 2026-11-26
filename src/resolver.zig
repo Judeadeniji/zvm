@@ -31,6 +31,23 @@ pub const ResolvedVersion = struct {
     }
 };
 
+pub const ResolveOptions = struct {
+    /// Overrides `ZVM_EXACT` for this resolution. `null` leaves the environment
+    /// variable in charge.
+    exact: ?bool = null,
+};
+
+fn exactEnabled(options: ResolveOptions, environ_map: ?*const EnvironMap) bool {
+    if (options.exact) |exact| return exact;
+
+    const env = environ_map orelse return false;
+    const raw = env.get("ZVM_EXACT") orelse return false;
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    return std.ascii.eqlIgnoreCase(trimmed, "1") or
+        std.ascii.eqlIgnoreCase(trimmed, "true") or
+        std.ascii.eqlIgnoreCase(trimmed, "yes");
+}
+
 /// Parse the `.minimum_zig_version` string from a `build.zig.zon` buffer.
 pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
     const key = ".minimum_zig_version";
@@ -129,6 +146,22 @@ pub fn resolve(
     environ_map: ?*const EnvironMap,
     start_dir: []const u8,
 ) ResolveError!ResolvedVersion {
+    return resolveWithOptions(paths, io, allocator, environ_map, start_dir, .{});
+}
+
+/// Like `resolve`, but callers may override exact mode. When `options.exact` is
+/// null, `ZVM_EXACT` is honored. Exact mode treats `minimum_zig_version` as an
+/// exact requirement instead of a lower bound.
+pub fn resolveWithOptions(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    start_dir: []const u8,
+    options: ResolveOptions,
+) ResolveError!ResolvedVersion {
+    const exact = exactEnabled(options, environ_map);
+
     // 1. Environment variable override
     if (environ_map) |env| {
         if (env.get("ZIG_VERSION")) |zig_env| {
@@ -160,9 +193,9 @@ pub fn resolve(
             if (trimmed.len > 0) {
                 const constraint = Constraint.parse(trimmed) catch null;
                 if (constraint) |c| {
-                    if (c.exactPin()) |exact| {
+                    if (c.exactPin()) |exact_pin| {
                         return .{
-                            .version = try exact.toString(allocator),
+                            .version = try exact_pin.toString(allocator),
                             .source = .zig_version_file,
                             .source_path = try allocator.dupe(u8, zig_version_path),
                         };
@@ -193,6 +226,15 @@ pub fn resolve(
             if (parseMinimumZigVersionFromZon(zon_bytes)) |min_str| {
                 const min_ver = Version.parse(min_str) catch null;
                 if (min_ver) |mv| {
+                    if (exact) {
+                        // Return the declared version even when it is not installed;
+                        // `zvm current` can report it and the router can install it.
+                        return .{
+                            .version = try mv.toString(allocator),
+                            .source = .build_zig_zon,
+                            .source_path = try allocator.dupe(u8, zon_path),
+                        };
+                    }
                     if (try findHighestSatisfyingInstalled(paths, io, allocator, mv)) |matched| {
                         return .{
                             .version = matched,
@@ -327,4 +369,88 @@ test "resolve hierarchy .zig-version semver constraint" {
 
     try std.testing.expectEqualStrings("0.17.1", resolved.version);
     try std.testing.expectEqual(ResolutionSource.zig_version_file, resolved.source);
+}
+
+/// Creates a project with `minimum_zig_version` and only Zig 0.17.0 installed.
+/// An empty `.zig-version` shadows any pin in the repository's ancestors.
+fn setupBuildZonProject(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    tmp_path: []const u8,
+    min_version: []const u8,
+) !void {
+    try paths.ensureDirs(io);
+
+    const v_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(v_dir);
+    try Io.Dir.cwd().createDirPath(io, v_dir);
+
+    const bin_path = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(bin_path);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+
+    const zv_file = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(zv_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zv_file, .data = "\n" });
+
+    const zon_file = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_file);
+    const payload = try allocator.print(".{{ .minimum_zig_version = \"{s}\" }}\n", .{min_version});
+    defer allocator.free(payload);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zon_file, .data = payload });
+}
+
+test "resolve exact minimum_zig_version" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.15.2");
+
+    // Default: newest installed version satisfying the lower bound.
+    var default_resolved = try resolve(&paths, io, allocator, null, tmp_path);
+    defer default_resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.17.0", default_resolved.version);
+
+    // Exact: the declared minimum, even when it is not installed.
+    var exact_resolved = try resolveWithOptions(&paths, io, allocator, null, tmp_path, .{ .exact = true });
+    defer exact_resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.15.2", exact_resolved.version);
+    try std.testing.expectEqual(ResolutionSource.build_zig_zon, exact_resolved.source);
+}
+
+test "ZVM_EXACT enables exact minimum resolution and --no-exact overrides it" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.15.2");
+
+    var env_map = EnvironMap.init(allocator);
+    defer env_map.deinit();
+    try env_map.put("ZVM_EXACT", "1");
+
+    var from_env = try resolve(&paths, io, allocator, &env_map, tmp_path);
+    defer from_env.deinit(allocator);
+    try std.testing.expectEqualStrings("0.15.2", from_env.version);
+
+    // A command-line `--no-exact` override wins over the environment.
+    var overridden = try resolveWithOptions(&paths, io, allocator, &env_map, tmp_path, .{ .exact = false });
+    defer overridden.deinit(allocator);
+    try std.testing.expectEqualStrings("0.17.0", overridden.version);
 }

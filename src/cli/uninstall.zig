@@ -5,6 +5,7 @@ const Io = std.Io;
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const report = @import("report.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -23,15 +24,17 @@ const UninstallError = zvm.errors.CliError ||
     std.mem.Allocator.Error ||
     std.Io.Writer.Error ||
     Io.Dir.AccessError ||
-    Io.Dir.DeleteTreeError;
+    Io.Dir.DeleteTreeError ||
+    report.Reported;
 
 fn handle(ctx: zli.CommandContext) UninstallError!void {
     const app = ctx.getContextData(AppContext);
     const raw_version = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
 
     const parsed = zvm.Version.parse(raw_version) catch {
-        try ctx.writer.print("error: Invalid Zig version '{s}'.\n", .{raw_version});
-        return zvm.errors.CliError.InvalidVersion;
+        try app.reporter.fail("Invalid Zig version '{s}'.\n", .{raw_version});
+        try app.reporter.hint("Use a version such as '0.17.0' or 'master'.\n", .{});
+        return error.Reported;
     };
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
@@ -42,12 +45,13 @@ fn handle(ctx: zli.CommandContext) UninstallError!void {
     const cwd = Io.Dir.cwd();
     cwd.access(ctx.io, v_dir, .{}) catch |err| switch (err) {
         error.FileNotFound => {
-            try ctx.writer.print("error: Zig version '{s}' is not installed.\n", .{canonical});
-            return zvm.errors.CliError.VersionNotInstalled;
+            try app.reporter.fail("Zig version '{s}' is not installed.\n", .{canonical});
+            try app.reporter.hint("Run 'zvm list' to see installed versions.\n", .{});
+            return error.Reported;
         },
         else => return err,
     };
 
     try cwd.deleteTree(ctx.io, v_dir);
-    try ctx.writer.print("Uninstalled Zig {s}.\n", .{canonical});
+    try app.reporter.success("Uninstalled Zig {s}.\n", .{canonical});
 }

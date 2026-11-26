@@ -26,8 +26,15 @@ fn handle(ctx: zli.CommandContext) !void {
     try ctx.spinner.start("Fetching release index from ziglang.org...", .{});
 
     const json_bytes = zvm.downloader.fetchIndexJson(ctx.io, ctx.allocator, ctx.environ_map) catch |err| {
-        try ctx.spinner.fail("Failed to fetch release index: {s}", .{@errorName(err)});
-        return err;
+        ctx.spinner.stop();
+        switch (err) {
+            zvm.errors.DownloadError.HttpRequestFailed => {
+                try app.reporter.fail("Could not fetch the Zig release index from ziglang.org.\n", .{});
+                try app.reporter.hint("Check your network connection and try again.\n", .{});
+            },
+            else => try app.reporter.reportError(err),
+        }
+        return error.Reported;
     };
     defer ctx.allocator.free(json_bytes);
 
@@ -37,18 +44,29 @@ fn handle(ctx: zli.CommandContext) !void {
 
     ctx.spinner.stop();
 
-    try ctx.writer.print("Available Zig releases ({s}):\n", .{tkey});
+    try app.reporter.heading("Available Zig releases ({s}):\n", .{tkey});
     for (releases) |rel| {
         if (!show_all and !rel.has_host_target) continue;
 
         const installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, rel.name);
-        const marker = if (installed) "* " else "  ";
-        const avail_note = if (rel.has_host_target) "" else " [unavailable for target]";
+        if (installed) {
+            try app.reporter.active("* ");
+        } else {
+            try ctx.writer.writeAll("  ");
+        }
+        try app.reporter.version(rel.name);
+        if (rel.name.len < 10) {
+            try ctx.writer.splatByteAll(' ', 10 - rel.name.len);
+        }
 
         if (rel.resolved_version) |rv| {
-            try ctx.writer.print("{s}{s:<10} ({s}, {s}){s}\n", .{ marker, rel.name, rv, rel.date, avail_note });
+            try ctx.writer.print(" ({s}, {s})", .{ rv, rel.date });
         } else {
-            try ctx.writer.print("{s}{s:<10} ({s}){s}\n", .{ marker, rel.name, rel.date, avail_note });
+            try ctx.writer.print(" ({s})", .{rel.date});
         }
+        if (!rel.has_host_target) {
+            try app.reporter.dim(" [unavailable for target]");
+        }
+        try ctx.writer.writeByte('\n');
     }
 }
