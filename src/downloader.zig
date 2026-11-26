@@ -476,12 +476,27 @@ pub const ExtractError = ArchiveError ||
     Io.Dir.RenameError ||
     Io.File.OpenError;
 
+pub const ExtractOptions = struct {
+    strip_components: u32 = 1,
+};
+
 /// Extracts `archive_path` into `dest_dir_path`, stripping the single top-level archive folder.
 pub fn extractArchive(
     io: Io,
     allocator: Allocator,
     archive_path: []const u8,
     dest_dir_path: []const u8,
+) ExtractError!void {
+    return extractArchiveWithOptions(io, allocator, archive_path, dest_dir_path, .{});
+}
+
+/// Extracts `archive_path` into `dest_dir_path` with explicit extraction options.
+pub fn extractArchiveWithOptions(
+    io: Io,
+    allocator: Allocator,
+    archive_path: []const u8,
+    dest_dir_path: []const u8,
+    options: ExtractOptions,
 ) ExtractError!void {
     const format = try ArchiveFormat.fromFilename(archive_path);
     const cwd = Io.Dir.cwd();
@@ -511,7 +526,7 @@ pub fn extractArchive(
             };
             defer xz.deinit();
             std.tar.extract(io, stage_dir, &xz.reader, .{
-                .strip_components = 1,
+                .strip_components = options.strip_components,
                 .mode_mode = .executable_bit_only,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -522,7 +537,7 @@ pub fn extractArchive(
             var flate_buf: [std.compress.flate.max_window_len]u8 = undefined;
             var gz: std.compress.flate.Decompress = .init(&file_reader.interface, .gzip, &flate_buf);
             std.tar.extract(io, stage_dir, &gz.reader, .{
-                .strip_components = 1,
+                .strip_components = options.strip_components,
                 .mode_mode = .executable_bit_only,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,

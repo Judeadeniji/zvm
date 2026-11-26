@@ -183,7 +183,10 @@ pub fn installZls(
     );
     defer allocator.free(cache_path);
 
-    try downloader.extractArchive(io, allocator, cache_path, install_dir);
+    // ZLS tarballs place `zls` at the archive root without a top-level wrapper directory.
+    try downloader.extractArchiveWithOptions(io, allocator, cache_path, install_dir, .{
+        .strip_components = 0,
+    });
     try paths.writeZlsVersionMeta(io, allocator, zig_version_key, artifact.version);
 
     return .{
