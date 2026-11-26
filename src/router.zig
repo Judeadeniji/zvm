@@ -105,7 +105,7 @@ pub const Router = struct {
     }
 
     fn printStderr(io: Io, comptime fmt: []const u8, args: anytype) void {
-        var err_buf: [512]u8 = undefined;
+        var err_buf: [1024]u8 = undefined;
         var err_writer = Io.File.Writer.init(.stderr(), io, &err_buf);
         const w = &err_writer.interface;
         _ = w.print(fmt, args) catch {};
@@ -120,6 +120,18 @@ pub const Router = struct {
         };
         res.deinit(self.allocator);
         return true;
+    }
+
+    /// Warns when a `build.zig.zon` in the resolved project does not parse. The
+    /// project is broken even if the scan fallback still recovers the version:
+    /// `zig build` rejects the same manifest without a word from zvm.
+    fn warnMalformedManifest(self: *const Router, resolved: resolver.ResolvedVersion) void {
+        const path = resolved.malformed_zon_path orelse return;
+        printStderr(
+            self.io,
+            "warning: '{s}' is not valid ZON\nhint: Run 'zvm doctor' to see the parse error.\n",
+            .{path},
+        );
     }
 
     /// Resolves the required Zig version for `current_dir` and delegates execution to
@@ -160,6 +172,7 @@ pub const Router = struct {
                 std.process.exit(1);
             };
             defer resolved.deinit(self.allocator);
+            warnMalformedManifest(self, resolved);
             break :blk try self.allocator.dupe(u8, resolved.version);
         };
         defer self.allocator.free(target_version);
@@ -215,6 +228,7 @@ pub const Router = struct {
                 std.process.exit(1);
             };
             defer resolved.deinit(self.allocator);
+            warnMalformedManifest(self, resolved);
             break :blk try self.allocator.dupe(u8, resolved.version);
         };
         defer self.allocator.free(target_zig_version);

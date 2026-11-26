@@ -24,10 +24,14 @@ pub const ResolvedVersion = struct {
     version: []const u8,
     source: ResolutionSource,
     source_path: ?[]const u8 = null,
+    /// First `build.zig.zon` the walk found that `std.zon.parse` rejected, so the
+    /// caller can warn that its `minimum_zig_version` was ignored.
+    malformed_zon_path: ?[]const u8 = null,
 
     pub fn deinit(self: *ResolvedVersion, allocator: Allocator) void {
         allocator.free(self.version);
         if (self.source_path) |p| allocator.free(p);
+        if (self.malformed_zon_path) |p| allocator.free(p);
     }
 };
 
@@ -77,20 +81,30 @@ fn exactEnabled(paths: *const Paths, io: Io, options: ResolveOptions, environ_ma
     return paths.isMarkerSet(io, "exact");
 }
 
-/// Extracts `.minimum_zig_version` from a `build.zig.zon` buffer and returns an
-/// owned copy (or null when the field is absent).
+pub const ZonExtract = struct {
+    /// Owned `.minimum_zig_version` value, or null when the manifest has none.
+    version: ?[]u8 = null,
+    /// `std.zon.parse` rejected the manifest, so the textual fallback produced
+    /// the result (if any). Resolution can continue either way, but a rejected
+    /// manifest is worth reporting.
+    malformed: bool = false,
+};
+
+/// Extracts `.minimum_zig_version` from a `build.zig.zon` buffer.
 ///
 /// Uses the real zon parser so comments, inline manifests, and nested tables are
 /// handled exactly like `zig build` does. If the manifest cannot be parsed at
-/// all, falls back to the textual scan below: `std.zon.parse.Diagnostics` can
-/// only be surfaced through `fatal()`, which terminates the process — not an
-/// option while walking ancestor directories that may not even belong to this
-/// project.
-pub fn extractMinimumZigVersion(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
-    if (try parseMinimumZigVersionStructured(allocator, content)) |version| return version;
+/// all, falls back to the textual scan below and flags the result as malformed:
+/// reporting it is the caller's decision, because ancestor directories may not
+/// belong to this project.
+pub fn extractMinimumZigVersion(allocator: Allocator, content: []const u8) Allocator.Error!ZonExtract {
+    var malformed = false;
+    if (try parseMinimumZigVersionStructured(allocator, content, &malformed)) |version| {
+        return .{ .version = version, .malformed = malformed };
+    }
 
-    const scanned = parseMinimumZigVersionFromZon(content) orelse return null;
-    return try allocator.dupe(u8, scanned);
+    const scanned = parseMinimumZigVersionFromZon(content) orelse return .{ .malformed = malformed };
+    return .{ .version = try allocator.dupe(u8, scanned), .malformed = malformed };
 }
 
 const ZonPackage = struct {
@@ -123,7 +137,11 @@ pub fn manifestErrorText(allocator: Allocator, content: []const u8) Allocator.Er
     return null;
 }
 
-fn parseMinimumZigVersionStructured(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
+fn parseMinimumZigVersionStructured(
+    allocator: Allocator,
+    content: []const u8,
+    malformed: *bool,
+) Allocator.Error!?[]u8 {
     // The zon parser requires a sentinel-terminated source.
     const source = try allocator.allocSentinel(u8, content.len, 0);
     defer allocator.free(source);
@@ -141,7 +159,10 @@ fn parseMinimumZigVersionStructured(allocator: Allocator, content: []const u8) A
         .ignore_unknown_fields = true,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => return null,
+        else => {
+            malformed.* = true;
+            return null;
+        },
     };
 
     const raw = package.minimum_zig_version orelse return null;
@@ -209,35 +230,65 @@ fn appendName(buf: []u8, dir: []const u8, name: []const u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, name }) catch null;
 }
 
+/// State for walking `start_dir` and its ancestors, one level at a time.
+///
+/// The path lives in one owned buffer that a parent step only shortens, so a walk
+/// costs no allocations per level. Candidate files are still probed by full path:
+/// keeping an open directory handle and probing short names instead was measured
+/// slower, because opening `..` costs a third syscall per level and the extra work
+/// is syscalls, not path resolution (see `AUDIT.md`).
+const AncestorWalk = struct {
+    /// Full path of the current level; truncated in place when moving up.
+    path_buf: []u8,
+    path_len: usize,
+
+    fn init(allocator: Allocator, start_dir: []const u8) !AncestorWalk {
+        const path_buf = try allocator.alloc(u8, start_dir.len);
+        @memcpy(path_buf, start_dir);
+        return .{ .path_buf = path_buf, .path_len = start_dir.len };
+    }
+
+    fn deinit(self: *AncestorWalk, allocator: Allocator) void {
+        allocator.free(self.path_buf);
+    }
+
+    fn path(self: *const AncestorWalk) []const u8 {
+        return self.path_buf[0..self.path_len];
+    }
+
+    /// Moves to the parent directory. Returns false when the walk is over.
+    fn toParent(self: *AncestorWalk) bool {
+        const current = self.path();
+        const parent = std.fs.path.dirname(current) orelse return false;
+        if (parent.len == 0 or std.mem.eql(u8, parent, current)) return false;
+        // `dirname` returns a prefix of the input; verify before reusing its length.
+        if (!std.mem.eql(u8, self.path_buf[0..parent.len], parent)) return false;
+        self.path_len = parent.len;
+        return true;
+    }
+};
+
 /// Walks parent directories from `start_dir` to find `.minimum_zig_version` in `build.zig.zon`.
 pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []const u8) !?[]u8 {
-    var walk_buf = try allocator.alloc(u8, start_dir.len);
-    defer allocator.free(walk_buf);
-    @memcpy(walk_buf, start_dir);
-    var current_len: usize = start_dir.len;
+    var walk = try AncestorWalk.init(allocator, start_dir);
+    defer walk.deinit(allocator);
 
     const cwd = Io.Dir.cwd();
     var path_buf: [Io.Dir.max_path_bytes]u8 = undefined;
 
     while (true) {
-        const current_dir = walk_buf[0..current_len];
-        const zon_path = appendName(&path_buf, current_dir, "build.zig.zon") orelse break;
-
+        const zon_path = appendName(&path_buf, walk.path(), "build.zig.zon") orelse break;
         const zon_bytes: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
         defer if (zon_bytes) |bytes| allocator.free(bytes);
         if (zon_bytes) |bytes| {
-            if (try extractMinimumZigVersion(allocator, bytes)) |min_str| {
-                return min_str;
-            }
+            const extracted = try extractMinimumZigVersion(allocator, bytes);
+            if (extracted.version) |min_str| return min_str;
         }
 
-                const parent = std.fs.path.dirname(current_dir) orelse break;
-        if (parent.len == 0 or std.mem.eql(u8, parent, current_dir)) break;
-        if (!std.mem.eql(u8, walk_buf[0..parent.len], parent)) break;
-        current_len = parent.len;
+        if (!walk.toParent()) break;
     }
 
     return null;
@@ -318,6 +369,23 @@ pub fn resolveWithOptions(
     start_dir: []const u8,
     options: ResolveOptions,
 ) ResolveError!ResolvedVersion {
+    var malformed_zon: ?[]u8 = null;
+    errdefer if (malformed_zon) |p| allocator.free(p);
+
+    var resolved = try resolveWalk(paths, io, allocator, environ_map, start_dir, options, &malformed_zon);
+    resolved.malformed_zon_path = malformed_zon;
+    return resolved;
+}
+
+fn resolveWalk(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    start_dir: []const u8,
+    options: ResolveOptions,
+    malformed_zon: *?[]u8,
+) ResolveError!ResolvedVersion {
     const exact = exactEnabled(paths, io, options, environ_map);
 
     // 1. Environment variable override
@@ -330,23 +398,18 @@ pub fn resolveWithOptions(
         }
     }
 
-    // 2. Ancestor directory walk-up.
-    // One owned buffer serves every level: a parent step only shortens it, and the
-    // candidate paths are formatted into a stack buffer rather than heap-joined,
-    // so a walk costs no allocations beyond the file contents actually read.
-    var walk_buf = try allocator.alloc(u8, start_dir.len);
-    defer allocator.free(walk_buf);
-    @memcpy(walk_buf, start_dir);
-    var current_len: usize = start_dir.len;
+    // 2. Ancestor directory walk-up. The path is carried in one owned buffer that a
+    // parent step only shortens, and candidate paths are formatted into a stack
+    // buffer, so a level without a config file allocates nothing.
+    var walk = try AncestorWalk.init(allocator, start_dir);
+    defer walk.deinit(allocator);
 
     const cwd = Io.Dir.cwd();
     var path_buf: [Io.Dir.max_path_bytes]u8 = undefined;
 
     while (true) {
-        const current_dir = walk_buf[0..current_len];
-
         // 2a. Check for .zig-version
-        if (appendName(&path_buf, current_dir, ".zig-version")) |zig_version_path| {
+        if (appendName(&path_buf, walk.path(), ".zig-version")) |zig_version_path| {
             const zig_version_text: ?[]u8 = cwd.readFileAlloc(io, zig_version_path, allocator, .limited(max_zig_version_bytes)) catch |err| switch (err) {
                 error.FileNotFound => null,
                 else => return err,
@@ -377,16 +440,21 @@ pub fn resolveWithOptions(
         }
 
         // 2b. Check for build.zig.zon
-        if (appendName(&path_buf, current_dir, "build.zig.zon")) |zon_path| {
+        if (appendName(&path_buf, walk.path(), "build.zig.zon")) |zon_path| {
             const zon_text: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
                 error.FileNotFound => null,
                 else => return err,
             };
             defer if (zon_text) |text| allocator.free(text);
             if (zon_text) |zon_bytes| {
-                const min_str_owned = try extractMinimumZigVersion(allocator, zon_bytes);
-                defer if (min_str_owned) |s| allocator.free(s);
-                if (min_str_owned) |min_str| {
+                const extracted = try extractMinimumZigVersion(allocator, zon_bytes);
+                defer if (extracted.version) |s| allocator.free(s);
+                // Report the first rejected manifest even when the fallback scan
+                // still recovers the version: `zig build` will reject it too.
+                if (extracted.malformed and malformed_zon.* == null) {
+                    malformed_zon.* = try allocator.dupe(u8, zon_path);
+                }
+                if (extracted.version) |min_str| {
                     const min_ver = Version.parse(min_str) catch null;
                     if (min_ver) |mv| {
                         if (exact) {
@@ -409,12 +477,7 @@ pub fn resolveWithOptions(
             }
         }
 
-        // Walk to the parent by shortening the buffer in place.
-        const parent = std.fs.path.dirname(current_dir) orelse break;
-        if (parent.len == 0 or std.mem.eql(u8, parent, current_dir)) break;
-        // `dirname` returns a prefix of the input; verify before reusing its length.
-        if (!std.mem.eql(u8, walk_buf[0..parent.len], parent)) break;
-        current_len = parent.len;
+        if (!walk.toParent()) break;
     }
 
     // 3. Global default
@@ -476,13 +539,15 @@ test "extractMinimumZigVersion parses real manifests and returns owned memory" {
         \\}
     ;
 
-    const value = (try extractMinimumZigVersion(allocator, zon)).?;
+    const extracted = try extractMinimumZigVersion(allocator, zon);
+    const value = extracted.version.?;
     defer allocator.free(value);
     try std.testing.expectEqualStrings("0.17.0", value);
+    try std.testing.expect(!extracted.malformed);
 
     try std.testing.expectEqual(
         @as(?[]u8, null),
-        try extractMinimumZigVersion(allocator, ".{ .name = .zvm, .paths = .{ \"a\" } }"),
+        (try extractMinimumZigVersion(allocator, ".{ .name = .zvm, .paths = .{ \"a\" } }")).version,
     );
 }
 
@@ -497,9 +562,11 @@ test "extractMinimumZigVersion falls back to the scan for unparseable manifests"
         \\}
     ;
 
-    const value = (try extractMinimumZigVersion(allocator, broken)).?;
+    const extracted = try extractMinimumZigVersion(allocator, broken);
+    const value = extracted.version.?;
     defer allocator.free(value);
     try std.testing.expectEqualStrings("0.16.0", value);
+    try std.testing.expect(extracted.malformed);
 }
 
 test "parseMinimumZigVersionFromZon ignores commented-out declarations" {
@@ -764,6 +831,36 @@ test "minimum_zig_version is honored in zon manifests larger than a small buffer
     defer resolved.deinit(allocator);
     try std.testing.expectEqualStrings("0.17.0", resolved.version);
     try std.testing.expectEqual(ResolutionSource.build_zig_zon, resolved.source);
+}
+
+test "resolve reports a build.zig.zon the real parser rejects" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    // Installs 0.17.0, writes an empty .zig-version, and a valid manifest.
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.17.0");
+
+    // Broken manifest: the version is still recovered by the scan fallback, but the
+    // router must be able to say the manifest does not parse.
+    const zon_file = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_file);
+    try Io.Dir.cwd().writeFile(io, .{
+        .sub_path = zon_file,
+        .data = ".{\n    .minimum_zig_version = \"0.17.0\",\n    .paths = .{ \"build.zig\"\n}\n",
+    });
+
+    var resolved = try resolve(&paths, io, allocator, null, tmp_path);
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.17.0", resolved.version);
+    try std.testing.expectEqualStrings(zon_file, resolved.malformed_zon_path.?);
 }
 
 test "invalid .zig-version is reported instead of treated as a version" {

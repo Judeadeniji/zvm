@@ -57,6 +57,14 @@ audit time. Commit hashes are from the fix series that followed the audit.
   - `resolver.manifestErrorText` keeps the arena alive while formatting; the returned
     string is owned by the caller.
 
+- [x] **M** A malformed `build.zig.zon` was invisible during normal `zig` invocations
+  - `resolve` now reports the first manifest `std.zon.parse` rejected via
+    `ResolvedVersion.malformed_zon_path`, and the router prints a one-line warning
+    with a pointer to `zvm doctor`. It fires even when the scan fallback recovers the
+    version, because `zig build` rejects that same manifest.
+  - Not warned about when `.zig-version` short-circuits the walk first: the manifest is
+    never consulted, so warning would be noise.
+
 - [x] **M** Non-destructive install ordering — `src/downloader.zig`
   - The previous tree is kept as a `.old-<suffix>` sibling and restored if the swap
     fails. `3e80173`.
@@ -128,6 +136,17 @@ audit time. Commit hashes are from the fix series that followed the audit.
     405-459 ms after. Unchanged: the walk is bound by the two failed file opens per
     level, not by these allocations, so this is a churn reduction, not a speedup.
   - `4f010db`.
+  - Also tried holding one open directory handle per level and probing
+    `".zig-version"` / `"build.zig.zon"` by short name instead of full ancestor paths.
+    That trades 2 lookups for 3 syscalls per level and measured 446-469 ms against
+    430-446 ms for the path-based walk, so it was reverted, not shipped.
+- [x] Resolution is syscall-bound, not CPU-bound: 1 level costs ~13 us and each
+      additional ancestor ~6.6 us (~3.3 us per file probe) on this machine, i.e.
+      ~140 us for a 20-level path. Two lookups per level (`.zig-version` then
+      `build.zig.zon`) is the floor; batching them needs one directory read plus an
+      upward open, which is not fewer syscalls. Making the walk materially faster
+      would require a semantic change (stopping at the repository root) or a
+      resolution cache with its own invalidation cost.
 - [ ] `Paths.listInstalledVersions` / `listInstalledZlsVersions`: `isVersionInstalled`
       allocates two paths and calls `access` per entry although the directory is already
       open; checking the `zig`/`zls` entry during iteration avoids that.

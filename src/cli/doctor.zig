@@ -49,7 +49,7 @@ fn handle(ctx: zli.CommandContext) !void {
             defer ctx.allocator.free(message);
             try app.reporter.status(.warn, "build.zig.zon does not parse: {s}\n", .{manifest_path});
             try app.reporter.muted("{s}\n", .{std.mem.trimEnd(u8, message, "\n")});
-            try app.reporter.muted("       Fix the manifest or remove it; until then its minimum_zig_version is ignored.\n", .{});
+            try app.reporter.muted("       Fix or remove the manifest; zig build rejects it as written.\n", .{});
         }
     }
 
