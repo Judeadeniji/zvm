@@ -148,7 +148,8 @@ pub fn parseSha256Sums(sums_bytes: []const u8, asset_name: []const u8) ?[]const 
     return null;
 }
 
-/// Returns true if `target_tag` represents an update relative to `current_version`.
+/// Returns true if `target_tag` is strictly newer than `current_version`.
+/// Nightly builds are always considered newer so they can be refreshed.
 pub fn needsUpgrade(current_version: []const u8, target_tag: []const u8) bool {
     if (std.mem.eql(u8, target_tag, "nightly")) return true;
 
@@ -156,7 +157,7 @@ pub fn needsUpgrade(current_version: []const u8, target_tag: []const u8) bool {
     const cur_v = Version.parse(current_version) catch return !std.mem.eql(u8, current_version, clean_target);
     const tgt_v = Version.parse(clean_target) catch return !std.mem.eql(u8, current_version, clean_target);
 
-    return tgt_v.order(cur_v) != .eq;
+    return tgt_v.order(cur_v) == .gt;
 }
 
 fn fetchGithubJson(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap, url: []const u8) ![]u8 {
@@ -351,4 +352,7 @@ test "needsUpgrade compares semver and always updates nightly" {
     try std.testing.expect(!needsUpgrade("0.1.0", "v0.1.0"));
     try std.testing.expect(needsUpgrade("0.1.0", "v0.2.0"));
     try std.testing.expect(needsUpgrade("0.1.0", "nightly"));
+    // An older target is not an upgrade; downgrading requires --force.
+    try std.testing.expect(!needsUpgrade("0.2.0", "v0.1.0"));
+    try std.testing.expect(!needsUpgrade("0.2.0", "0.2.0"));
 }
