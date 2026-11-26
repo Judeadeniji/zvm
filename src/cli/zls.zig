@@ -271,11 +271,7 @@ fn handleList(ctx: zli.CommandContext) !void {
         active_ver = app.paths.readZlsDefaultVersion(ctx.io, ctx.allocator) catch null;
     }
 
-    std.mem.sort([]u8, versions, {}, struct {
-        fn lessThan(_: void, a: []u8, b: []u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lessThan);
+    std.mem.sort([]u8, versions, {}, zvm.version.lessThanText);
 
     for (versions) |v| {
         const is_active = if (active_ver) |a| std.mem.eql(u8, a, v) else false;

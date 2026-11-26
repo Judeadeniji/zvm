@@ -124,6 +124,7 @@ pub const Reporter = struct {
     }
 
     /// Colored `[OK]`, `[WARN]`, `[FAIL]`, or `[INFO]` status row.
+    /// Failures and warnings go to stderr so redirecting stdout never hides problems.
     pub fn status(self: *const Reporter, kind: Status, comptime fmt: []const u8, args: anytype) !void {
         const code = switch (kind) {
             .ok => ansi.green,
@@ -137,11 +138,19 @@ pub const Reporter = struct {
             .fail => "[FAIL]",
             .info => "[INFO]",
         };
-        if (self.out_color) try self.out.writeAll(code);
-        try self.out.writeAll(tag);
-        if (self.out_color) try self.out.writeAll(ansi.reset);
-        try self.out.splatByteAll(' ', 7 - tag.len);
-        try self.out.print(fmt, args);
+        const writer = switch (kind) {
+            .ok, .info => self.out,
+            .warn, .fail => self.err,
+        };
+        const color = switch (kind) {
+            .ok, .info => self.out_color,
+            .warn, .fail => self.err_color,
+        };
+        if (color) try writer.writeAll(code);
+        try writer.writeAll(tag);
+        if (color) try writer.writeAll(ansi.reset);
+        try writer.splatByteAll(' ', 7 - tag.len);
+        try writer.print(fmt, args);
     }
 
     /// Writes `text` with a raw ANSI code, if color is enabled on stdout.
@@ -377,11 +386,9 @@ test "Reporter status rows share a consistent tag width" {
     try reporter.status(.fail, "fail\n", .{});
     try reporter.status(.info, "info\n", .{});
 
-    try std.testing.expectEqualStrings(
-        "[OK]   ok\n[WARN] warn\n[FAIL] fail\n[INFO] info\n",
-        out.written(),
-    );
-    try std.testing.expectEqual(@as(usize, 0), err.written().len);
+    // Warnings and failures belong on stderr; successes and info on stdout.
+    try std.testing.expectEqualStrings("[OK]   ok\n[INFO] info\n", out.written());
+    try std.testing.expectEqualStrings("[WARN] warn\n[FAIL] fail\n", err.written());
 }
 
 test "Reporter colors output only when enabled" {

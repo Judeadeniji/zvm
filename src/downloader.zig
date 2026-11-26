@@ -9,7 +9,7 @@ const EnvironMap = std.process.Environ.Map;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const Paths = @import("paths.zig").Paths;
-const Version = @import("version.zig").Version;
+const version_mod = @import("version.zig");
 const minisig = @import("minisig.zig");
 const errors = @import("errors.zig");
 
@@ -105,24 +105,10 @@ pub const ArchiveFormat = enum {
 
 /// Maps CPU architecture and OS tag to the target key used in ziglang.org's `index.json`.
 pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) TargetError![]const u8 {
-    const arch_str = switch (arch) {
-        .x86_64 => "x86_64",
-        .aarch64 => "aarch64",
-        .x86 => "x86",
-        .arm => "arm",
-        .riscv64 => "riscv64",
-        .powerpc64le => "powerpc64le",
-        .loongarch64 => "loongarch64",
-        else => return TargetError.UnsupportedArchitecture,
-    };
-
-    const os_str = switch (os) {
-        .linux => "linux",
-        .macos => "macos",
-        .windows => "windows",
-        .freebsd => "freebsd",
+    switch (os) {
+        .linux, .macos, .windows, .freebsd => {},
         else => return TargetError.UnsupportedOperatingSystem,
-    };
+    }
 
     return switch (arch) {
         .x86_64 => switch (os) {
@@ -160,11 +146,7 @@ pub fn targetKey(arch: std.Target.Cpu.Arch, os: std.Target.Os.Tag) TargetError![
             .linux => "loongarch64-linux",
             else => TargetError.UnsupportedPlatformCombination,
         },
-        else => blk: {
-            _ = arch_str;
-            _ = os_str;
-            break :blk TargetError.UnsupportedArchitecture;
-        },
+        else => TargetError.UnsupportedArchitecture,
     };
 }
 
@@ -281,9 +263,7 @@ pub fn findArtifact(
 }
 
 fn lessThanReleaseSummary(_: void, a: ReleaseSummary, b: ReleaseSummary) bool {
-    const va = Version.parse(a.name) catch return std.mem.order(u8, a.name, b.name) == .gt;
-    const vb = Version.parse(b.name) catch return std.mem.order(u8, a.name, b.name) == .gt;
-    return va.order(vb) == .gt;
+    return version_mod.greaterThanText({}, a.name, b.name);
 }
 
 /// Parses `index.json` into a sorted slice of available releases (newest first).

@@ -95,6 +95,26 @@ pub const Version = struct {
     }
 };
 
+/// Ascending sort comparator for version strings.
+///
+/// Parseable versions sort before unparseable directory names, and only names
+/// that both parse (or both fail) are compared against each other. That keeps
+/// the ordering transitive when a versions directory contains junk.
+pub fn lessThanText(_: void, a: []const u8, b: []const u8) bool {
+    const va = Version.parse(a) catch null;
+    const vb = Version.parse(b) catch null;
+
+    if (va != null and vb != null) return va.?.order(vb.?) == .lt;
+    if (va != null) return true;
+    if (vb != null) return false;
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// Descending counterpart of `lessThanText`, for newest-first listings.
+pub fn greaterThanText(_: void, a: []const u8, b: []const u8) bool {
+    return lessThanText({}, b, a);
+}
+
 pub const Constraint = struct {
     atoms: [max_atoms]Atom = undefined,
     len: usize = 0,
@@ -206,15 +226,10 @@ pub const Constraint = struct {
         var c: Constraint = .{};
         var it = std.mem.tokenizeAny(u8, trimmed, " \t,");
         while (it.next()) |token| {
-            // Merge standalone operator tokens like `>= 0.17.0`? No, check below if token is bare operator:
-            if (isBareOperator(token)) {
+            // Handle standalone operator tokens such as `>= 0.17.0`, where the
+            // operator and the version arrive as separate whitespace tokens.
+            if (parseBareOp(token)) |atom_op| {
                 const next_tok = it.next() orelse return ConstraintParseError.MissingVersionAfterOperator;
-                var joined_buf: [128]u8 = undefined;
-                if (token.len + next_tok.len > joined_buf.len) return ConstraintParseError.ConstraintTooLong;
-                @memcpy(joined_buf[0..token.len], token);
-                @memcpy(joined_buf[token.len .. token.len + next_tok.len], next_tok);
-                // Re-parse using Version.parse on next_tok directly + op
-                const atom_op = parseBareOp(token).?;
                 const ver = try Version.parse(next_tok);
                 if (ver.tag == .master and atom_op != .exact) return ConstraintParseError.InvalidMasterConstraint;
                 try c.append(.{ .op = atom_op, .version = ver });
@@ -236,10 +251,6 @@ pub const Constraint = struct {
         if (std.mem.eql(u8, tok, "~")) return .tilde;
         if (std.mem.eql(u8, tok, "=")) return .exact;
         return null;
-    }
-
-    fn isBareOperator(tok: []const u8) bool {
-        return parseBareOp(tok) != null;
     }
 
     fn append(self: *Constraint, atom: Atom) ConstraintParseError!void {
@@ -327,6 +338,19 @@ test "toString formatting" {
     const str_m = try v_master.toString(allocator);
     defer allocator.free(str_m);
     try std.testing.expectEqualStrings("master", str_m);
+}
+
+test "lessThanText orders versions before junk names" {
+    try std.testing.expect(lessThanText({}, "0.16.0", "0.17.0"));
+    try std.testing.expect(!lessThanText({}, "0.17.0", "0.16.0"));
+    try std.testing.expect(lessThanText({}, "0.9.0", "0.10.0"));
+    // `master` outranks numbered releases, so it sorts last ascending.
+    try std.testing.expect(lessThanText({}, "0.17.0", "master"));
+    // Parseable names sort before unparseable ones, and junk stays lexicographic.
+    try std.testing.expect(lessThanText({}, "0.17.0", "banana"));
+    try std.testing.expect(!lessThanText({}, "banana", "0.17.0"));
+    try std.testing.expect(lessThanText({}, "apple", "banana"));
+    try std.testing.expect(greaterThanText({}, "banana", "0.17.0"));
 }
 
 test "Constraint exact, >=, ^, ~, and compound ranges" {

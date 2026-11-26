@@ -15,12 +15,6 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
     return cmd;
 }
 
-fn lessThanVersion(_: void, a: []const u8, b: []const u8) bool {
-    const va = zvm.Version.parse(a) catch return std.mem.order(u8, a, b) == .lt;
-    const vb = zvm.Version.parse(b) catch return std.mem.order(u8, a, b) == .lt;
-    return va.order(vb) == .lt;
-}
-
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
 
@@ -33,7 +27,7 @@ fn handle(ctx: zli.CommandContext) !void {
         return;
     }
 
-    std.mem.sort([]u8, versions, {}, lessThanVersion);
+    std.mem.sort([]u8, versions, {}, zvm.version.lessThanText);
 
     var active_version: ?[]const u8 = null;
     var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
