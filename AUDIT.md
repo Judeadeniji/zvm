@@ -47,6 +47,15 @@ audit time. Commit hashes are from the fix series that followed the audit.
 - [x] **M** Misleading/duplicated status streams — `src/cli/report.zig`
   - `Reporter.status(.warn/.fail)` now writes to stderr, so `zvm doctor > /dev/null`
     still surfaces failures. `94fa107`.
+  - Buffered stdout is flushed before each stderr write, and stderr is flushed per
+    line, so warnings no longer jump ahead of the report that precedes them.
+
+- [x] **M** A malformed `build.zig.zon` was only discoverable via `zig build`
+  - `zvm doctor` now parses the current project's manifest with `std.zon.parse` and,
+    when it fails, prints `Diagnostics.fmt(path)` (file:line:column plus the source
+    excerpt) and notes that `minimum_zig_version` is being ignored.
+  - `resolver.manifestErrorText` keeps the arena alive while formatting; the returned
+    string is owned by the caller.
 
 - [x] **M** Non-destructive install ordering — `src/downloader.zig`
   - The previous tree is kept as a `.old-<suffix>` sibling and restored if the swap
@@ -111,10 +120,14 @@ audit time. Commit hashes are from the fix series that followed the audit.
 
 ## Optimization
 
-- [ ] `resolver.resolve` / `findProjectMinimumVersion`: each ancestor level allocates a
-      `dupe`, two path joins, and frees them, plus two directory opens. A single owned
-      buffer walked with `std.fs.path.dirname` would remove ~4 allocations per level
-      (hot path: every `zig` invocation).
+- [x] `resolver.resolve` / `findProjectMinimumVersion` allocated a `dupe`, two path
+      joins, and freed them on every ancestor level. Both now walk one owned buffer
+      shortened in place and build candidate paths in a stack buffer, so a level with
+      no config file allocates nothing.
+  - Measured (3000 resolutions over 20 levels, ReleaseFast): 400-450 ms before,
+    405-459 ms after. Unchanged: the walk is bound by the two failed file opens per
+    level, not by these allocations, so this is a churn reduction, not a speedup.
+  - `4f010db`.
 - [ ] `Paths.listInstalledVersions` / `listInstalledZlsVersions`: `isVersionInstalled`
       allocates two paths and calls `access` per entry although the directory is already
       open; checking the `zig`/`zls` entry during iteration avoids that.

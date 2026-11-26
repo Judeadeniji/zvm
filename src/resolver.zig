@@ -93,11 +93,37 @@ pub fn extractMinimumZigVersion(allocator: Allocator, content: []const u8) Alloc
     return try allocator.dupe(u8, scanned);
 }
 
-fn parseMinimumZigVersionStructured(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
-    const ZonPackage = struct {
-        minimum_zig_version: ?[]const u8 = null,
+const ZonPackage = struct {
+    minimum_zig_version: ?[]const u8 = null,
+};
+
+/// Returns a human-readable diagnostic when `build.zig.zon` content cannot be
+/// parsed, or null when it parses cleanly. Used by `zvm doctor` to explain why
+/// a project pin is being ignored.
+pub fn manifestErrorText(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
+    const source = try allocator.allocSentinel(u8, content.len, 0);
+    defer allocator.free(source);
+    @memcpy(source, content);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    _ = std.zon.parse.fromSlice(ZonPackage, .{
+        .gpa = allocator,
+        .arena = arena_state.allocator(),
+        .source = source,
+        .diagnostics = &diagnostics,
+        .ignore_unknown_fields = true,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ParseZon => return try allocator.print("{f}", .{diagnostics.fmt("build.zig.zon")}),
     };
 
+    return null;
+}
+
+fn parseMinimumZigVersionStructured(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
     // The zon parser requires a sentinel-terminated source.
     const source = try allocator.allocSentinel(u8, content.len, 0);
     defer allocator.free(source);
@@ -411,6 +437,26 @@ test "parseMinimumZigVersionFromZon" {
     const min_v = parseMinimumZigVersionFromZon(zon);
     try std.testing.expect(min_v != null);
     try std.testing.expectEqualStrings("0.17.0", min_v.?);
+}
+
+test "manifestErrorText reports diagnostics only for unparseable manifests" {
+    const allocator = std.testing.allocator;
+
+    try std.testing.expectEqual(
+        @as(?[]u8, null),
+        try manifestErrorText(allocator, ".{ .name = .zvm, .paths = .{ \"a\" } }"),
+    );
+
+    const broken =
+        \\.{
+        \\    .name = .zvm,
+        \\    .paths = .{ "build.zig"
+        \\}
+    ;
+    const message = (try manifestErrorText(allocator, broken)).?;
+    defer allocator.free(message);
+    try std.testing.expect(std.mem.indexOf(u8, message, "build.zig.zon") != null);
+    try std.testing.expect(message.len > 0);
 }
 
 test "extractMinimumZigVersion parses real manifests and returns owned memory" {

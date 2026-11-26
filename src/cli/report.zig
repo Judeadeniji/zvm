@@ -34,6 +34,10 @@ pub const Reporter = struct {
     err: *Io.Writer,
     out_color: bool,
     err_color: bool,
+    /// The buffered stdout writer behind `out`, when it is wrapped (for example by
+    /// the ANSI stripper). Flushed before stderr writes so terminal output stays in
+    /// order instead of releasing the whole stdout buffer at exit.
+    out_sink: ?*Io.Writer = null,
 
     /// Detects color support from the environment and the real stdout/stderr.
     pub fn init(io: Io, environ_map: ?*const std.process.Environ.Map, out: *Io.Writer, err: *Io.Writer) Reporter {
@@ -56,6 +60,11 @@ pub const Reporter = struct {
         };
     }
 
+    /// Flushes buffered stdout so a following stderr message appears after it.
+    fn syncStdout(self: *const Reporter) void {
+        if (self.out_sink) |sink| sink.flush() catch {};
+    }
+
     fn paint(
         self: *const Reporter,
         writer: *Io.Writer,
@@ -64,7 +73,6 @@ pub const Reporter = struct {
         comptime fmt: []const u8,
         args: anytype,
     ) !void {
-        _ = self;
         const trailing_newline = comptime fmt.len > 0 and fmt[fmt.len - 1] == '\n';
 
         if (enabled) try writer.writeAll(code);
@@ -76,6 +84,10 @@ pub const Reporter = struct {
             try writer.print(fmt, args);
             if (enabled) try writer.writeAll(ansi.reset);
         }
+
+        // Diagnostics are line-buffered: flush stderr so the terminal sees them in
+        // the order they were produced.
+        if (writer == self.err) try writer.flush();
     }
 
     /// Green success message on stdout.
@@ -90,16 +102,19 @@ pub const Reporter = struct {
 
     /// Yellow warning on stderr.
     pub fn warn(self: *const Reporter, comptime fmt: []const u8, args: anytype) !void {
+        self.syncStdout();
         try self.paint(self.err, self.err_color, ansi.yellow, "warning: " ++ fmt, args);
     }
 
     /// Red error on stderr.
     pub fn fail(self: *const Reporter, comptime fmt: []const u8, args: anytype) !void {
+        self.syncStdout();
         try self.paint(self.err, self.err_color, ansi.red, "error: " ++ fmt, args);
     }
 
     /// Dim hint on stderr, usually printed after a failure.
     pub fn hint(self: *const Reporter, comptime fmt: []const u8, args: anytype) !void {
+        self.syncStdout();
         try self.paint(self.err, self.err_color, ansi.dim, "hint: " ++ fmt, args);
     }
 
@@ -140,7 +155,10 @@ pub const Reporter = struct {
         };
         const writer = switch (kind) {
             .ok, .info => self.out,
-            .warn, .fail => self.err,
+            .warn, .fail => blk: {
+                self.syncStdout();
+                break :blk self.err;
+            },
         };
         const color = switch (kind) {
             .ok, .info => self.out_color,
@@ -151,6 +169,7 @@ pub const Reporter = struct {
         if (color) try writer.writeAll(ansi.reset);
         try writer.splatByteAll(' ', 7 - tag.len);
         try writer.print(fmt, args);
+        if (writer == self.err) try writer.flush();
     }
 
     /// Writes `text` with a raw ANSI code, if color is enabled on stdout.

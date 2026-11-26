@@ -112,6 +112,8 @@ pub fn run(init: std.process.Init) !u8 {
         strip_writer = .init(stdout);
         reporter = report.Reporter.initWithColor(&strip_writer.interface, stderr, false, reporter.err_color);
     }
+    // Keep terminal ordering when a warning or error goes to stderr.
+    reporter.out_sink = &stdout_writer.interface;
 
     const init_options = zli.InitOptions{
         .allocator = gpa,

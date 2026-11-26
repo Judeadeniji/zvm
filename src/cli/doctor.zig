@@ -33,6 +33,26 @@ fn handle(ctx: zli.CommandContext) !void {
         try app.reporter.status(.warn, "Base directory missing: {s} (run 'zvm setup')\n", .{app.paths.base_dir});
     }
 
+    // 1b. Project manifest sanity: explain a build.zig.zon that cannot be parsed,
+    // because resolution silently ignores its minimum_zig_version.
+    const manifest_path = try std.fs.path.join(ctx.allocator, &.{ app.cwd, "build.zig.zon" });
+    defer ctx.allocator.free(manifest_path);
+
+    const manifest_text = cwd.readFileAlloc(ctx.io, manifest_path, ctx.allocator, .limited(1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    defer if (manifest_text) |text| ctx.allocator.free(text);
+
+    if (manifest_text) |text| {
+        if (try zvm.resolver.manifestErrorText(ctx.allocator, text)) |message| {
+            defer ctx.allocator.free(message);
+            try app.reporter.status(.warn, "build.zig.zon does not parse: {s}\n", .{manifest_path});
+            try app.reporter.muted("{s}\n", .{std.mem.trimEnd(u8, message, "\n")});
+            try app.reporter.muted("       Fix the manifest or remove it; until then its minimum_zig_version is ignored.\n", .{});
+        }
+    }
+
     // 2. Shim verification
     const shim_path = try app.paths.zigShimPath(ctx.allocator);
     defer ctx.allocator.free(shim_path);
