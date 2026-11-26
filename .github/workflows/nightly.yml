@@ -1,0 +1,101 @@
+name: Nightly
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "build.zig"
+      - "build.zig.zon"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux
+            archive: tar.gz
+          - target: aarch64-linux
+            archive: tar.gz
+          - target: x86_64-macos
+            archive: tar.gz
+          - target: aarch64-macos
+            archive: tar.gz
+          - target: x86_64-windows
+            archive: zip
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: Fetch Zig Minisign public key
+        id: minisig
+        run: |
+          KEY=$(curl -fsSL https://ziglang.org/download/ | grep -oE 'RW[A-Za-z0-9+/=]{54}' | head -n 1)
+          test -n "$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Build nightly binary (${{ matrix.target }})
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe -Dminisig-key="${{ steps.minisig.outputs.key }}"
+
+      - name: Package archive
+        run: |
+          mkdir -p dist
+          PKG="zvm-nightly-${{ matrix.target }}"
+          mkdir -p "stage/$PKG"
+          cp zig-out/bin/* "stage/$PKG/"
+          cp LICENSE README.md "stage/$PKG/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd stage && zip -r "../dist/$PKG.zip" "$PKG")
+          else
+            tar -czf "dist/$PKG.tar.gz" -C stage "$PKG"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Update nightly pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "nightly (dev build)"
+          prerelease: true
+          make_latest: false
+          body: |
+            > ⚠️ **This is an automated development build** from the latest `main` commit.
+            > It is not a stable release. Use a tagged `v*` release for production.
+
+            **Commit**: ${{ github.sha }}
+            **Built**: ${{ github.event.head_commit.timestamp }}
+          files: artifacts/*
+          fail_on_unmatched_files: true

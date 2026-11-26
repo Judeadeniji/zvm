@@ -1,15 +1,51 @@
 name: Release
 
+# Triggered two ways:
+#  1. Push a tag manually:  git tag v0.2.0 && git push origin v0.2.0
+#  2. GitHub UI / gh CLI:   gh workflow run release.yml -f version=v0.2.0
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to create and release (e.g. v0.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  tag:
+    # Only needed for manual dispatch — push trigger already has a tag.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate and create tag
+        id: set
+        run: |
+          TAG="${{ inputs.version }}"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Bad version: $TAG"; exit 1; }
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: [tag]
+    # Run after tag job (dispatch) OR directly on a tag push.
+    if: always() && (needs.tag.result == 'success' || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -28,6 +64,9 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v6
+        with:
+          # For tag-push: github.ref is the tag. For dispatch: use the created tag.
+          ref: ${{ github.event_name == 'push' && github.ref || needs.tag.outputs.tag }}
 
       - name: Setup Zig 0.17.0
         uses: mlugg/setup-zig@v2
@@ -46,8 +85,9 @@ jobs:
 
       - name: Package release archive
         run: |
+          TAG=${{ github.event_name == 'push' && github.ref_name || inputs.version }}
           mkdir -p dist
-          PKG="zvm-${{ github.ref_name }}-${{ matrix.target }}"
+          PKG="zvm-${TAG}-${{ matrix.target }}"
           mkdir -p "stage/$PKG"
           cp zig-out/bin/* "stage/$PKG/"
           cp LICENSE README.md "stage/$PKG/"
@@ -80,5 +120,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          make_latest: true
           generate_release_notes: true
+          files: artifacts/*
