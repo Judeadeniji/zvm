@@ -256,7 +256,12 @@ pub fn upgradeSelf(
         checksum_verified = true;
     }
 
-    const stage_dir = try std.fs.path.join(allocator, &.{ paths.cache_dir, ".zvm-upgrade-stage" });
+    // Unique per process so two concurrent upgrades do not share a staging dir.
+    const stage_dir = try allocator.print("{s}{c}.zvm-upgrade-stage-{s}", .{
+        paths.cache_dir,
+        std.fs.path.sep,
+        downloader.uniqueSuffix(io),
+    });
     defer allocator.free(stage_dir);
     defer Io.Dir.cwd().deleteTree(io, stage_dir) catch {};
 

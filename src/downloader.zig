@@ -419,7 +419,18 @@ const ProgressWriter = struct {
     }
 };
 
+/// Returns a short random hex suffix used to keep scratch paths process-unique,
+/// so concurrent `zvm` invocations never share (and delete) each other's files.
+pub fn uniqueSuffix(io: Io) [16]u8 {
+    var bytes: [8]u8 = undefined;
+    io.random(&bytes);
+    return std.fmt.bytesToHex(bytes, .lower);
+}
+
 /// Streams a URL to `dest_path`, deleting partial files on failure.
+///
+/// The body is written to a unique temporary file and renamed into place, so a
+/// concurrent `zvm` process never observes or truncates a half-written archive.
 pub fn downloadToFile(
     io: Io,
     allocator: Allocator,
@@ -429,8 +440,17 @@ pub fn downloadToFile(
     expected_size: ?u64,
     progress: ?ProgressCallback,
 ) !void {
-    downloadToFileInner(io, allocator, environ_map, url, dest_path, expected_size, progress) catch |err| {
-        Io.Dir.cwd().deleteFile(io, dest_path) catch {};
+    const tmp_path = try allocator.print("{s}.partial-{s}", .{ dest_path, uniqueSuffix(io) });
+    defer allocator.free(tmp_path);
+
+    downloadToFileInner(io, allocator, environ_map, url, tmp_path, expected_size, progress) catch |err| {
+        Io.Dir.cwd().deleteFile(io, tmp_path) catch {};
+        return err;
+    };
+
+    const cwd = Io.Dir.cwd();
+    Io.Dir.rename(cwd, tmp_path, cwd, dest_path, io) catch |err| {
+        cwd.deleteFile(io, tmp_path) catch {};
         return err;
     };
 }
@@ -501,11 +521,11 @@ pub fn extractArchiveWithOptions(
     const format = try ArchiveFormat.fromFilename(archive_path);
     const cwd = Io.Dir.cwd();
 
-    const stage_path = try allocator.print("{s}.staging", .{dest_dir_path});
+    // A per-process staging directory keeps concurrent installs from deleting
+    // each other's work.
+    const stage_path = try allocator.print("{s}.staging-{s}", .{ dest_dir_path, uniqueSuffix(io) });
     defer allocator.free(stage_path);
 
-    // Ensure clean staging and destination directories
-    cwd.deleteTree(io, stage_path) catch {};
     errdefer cwd.deleteTree(io, stage_path) catch {};
     try cwd.createDirPath(io, stage_path);
 
@@ -559,8 +579,7 @@ pub fn extractArchiveWithOptions(
                 stage_dir.close(io);
                 stage_open = false;
 
-                cwd.deleteTree(io, dest_dir_path) catch {};
-                try Io.Dir.rename(cwd, nested_src, cwd, dest_dir_path, io);
+                try replaceDir(cwd, io, allocator, nested_src, dest_dir_path);
                 cwd.deleteTree(io, stage_path) catch {};
                 return;
             }
@@ -570,8 +589,40 @@ pub fn extractArchiveWithOptions(
     stage_dir.close(io);
     stage_open = false;
 
-    cwd.deleteTree(io, dest_dir_path) catch {};
-    try Io.Dir.rename(cwd, stage_path, cwd, dest_dir_path, io);
+    try replaceDir(cwd, io, allocator, stage_path, dest_dir_path);
+}
+
+/// Moves `staged_path` into `dest_path`, keeping the previous destination as a
+/// `.old` sibling until the swap succeeds so a failure never destroys a working
+/// install.
+fn replaceDir(
+    cwd: Io.Dir,
+    io: Io,
+    allocator: Allocator,
+    staged_path: []const u8,
+    dest_path: []const u8,
+) ExtractError!void {
+    // Unique backup name so two processes replacing the same version never
+    // delete each other's only copy.
+    const backup_path = try allocator.print("{s}.old-{s}", .{ dest_path, uniqueSuffix(io) });
+    defer allocator.free(backup_path);
+
+    cwd.deleteTree(io, backup_path) catch {};
+
+    const moved_previous = blk: {
+        Io.Dir.rename(cwd, dest_path, cwd, backup_path, io) catch |err| switch (err) {
+            error.FileNotFound => break :blk false,
+            else => return err,
+        };
+        break :blk true;
+    };
+
+    Io.Dir.rename(cwd, staged_path, cwd, dest_path, io) catch |err| {
+        if (moved_previous) Io.Dir.rename(cwd, backup_path, cwd, dest_path, io) catch {};
+        return err;
+    };
+
+    cwd.deleteTree(io, backup_path) catch {};
 }
 
 /// Fetches a `.minisig` signature file if available (`null` on HTTP 404 for older releases).
@@ -994,6 +1045,20 @@ test "extractArchive unpacks real tar.xz, tar.gz, and zip stripping root directo
         defer allocator.free(std_path);
         const std_content = try cwd.readFile(io, std_path, &buf);
         try std.testing.expectEqualStrings("const x = 1;\n", std_content);
+
+        // Extracting over an existing install must replace it without leftovers.
+        try extractArchive(io, allocator, archive_path, dest_path);
+        const zig_again = try cwd.readFile(io, zig_path, &buf);
+        try std.testing.expectEqualStrings("#!/bin/sh\necho 0.17.0-test\n", zig_again);
+    }
+
+    var staging_scan = try cwd.openDir(io, ".zig-cache/tmp/" ++ tmp.sub_path, .{ .iterate = true });
+    defer staging_scan.close(io);
+    var entries = staging_scan.iterate();
+    while (try entries.next(io)) |entry| {
+        try std.testing.expect(std.mem.indexOf(u8, entry.name, ".staging-") == null);
+        try std.testing.expect(std.mem.indexOf(u8, entry.name, ".old-") == null);
+        try std.testing.expect(std.mem.indexOf(u8, entry.name, ".partial-") == null);
     }
 }
 
