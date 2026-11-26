@@ -5,6 +5,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 const flags = @import("flags.zig");
+const zls_cmd = @import("zls.zig");
 
 const SpinnerProgress = struct {
     spinner: *zli.Spinner,
@@ -63,6 +64,12 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .default_value = .{ .String = "" },
     });
     try cmd.addFlag(flags.exact);
+    try cmd.addFlag(.{
+        .name = "with-zls",
+        .description = "Also install the compatible ZLS release for this Zig version",
+        .type = .Bool,
+        .default_value = .{ .Bool = false },
+    });
     return cmd;
 }
 
@@ -96,6 +103,7 @@ fn handle(ctx: zli.CommandContext) !void {
         break :blk resolved_owned.?;
     };
     const force = ctx.flag("force", bool);
+    const with_zls = ctx.flag("with-zls", bool);
     const no_minisig = ctx.flag("no-minisig", bool);
     const minisig_key_flag = ctx.flag("minisig-key", []const u8);
     const minisig_override: ?[]const u8 = if (minisig_key_flag.len > 0) minisig_key_flag else null;
@@ -201,5 +209,9 @@ fn handle(ctx: zli.CommandContext) !void {
         if (shim_status != null and shim_status.? == .missing) {
             try app.reporter.muted("Tip: Run 'zvm setup' to create the 'zig' shim so 'zig' routes through zvm.\n", .{});
         }
+    }
+
+    if (with_zls) {
+        try zls_cmd.installZlsWithSpinner(app, ctx, canonical, force);
     }
 }

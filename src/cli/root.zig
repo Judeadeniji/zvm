@@ -23,6 +23,7 @@ const clean_cmd = @import("clean.zig");
 const config_cmd = @import("config.zig");
 const env_cmd = @import("env.zig");
 const completions_cmd = @import("completions.zig");
+const zls_cmd = @import("zls.zig");
 
 fn showHelp(ctx: zli.CommandContext) !void {
     try ctx.command.printHelp();
@@ -52,6 +53,7 @@ pub fn buildRootCommand(init_options: zli.InitOptions) zli.CommandSetupErrors!*z
         config_cmd.command,
         env_cmd.command,
         completions_cmd.command,
+        zls_cmd.command,
     };
 
     for (subcommands) |builder| {
@@ -77,9 +79,15 @@ pub fn run(init: std.process.Init) !u8 {
 
     const args = try init.minimal.args.toSlice(arena);
     // Short-circuit before building the `zli` tree so shim invocations have minimal startup overhead.
-    if (args.len > 0 and zvm.Router.isZigShim(args[0])) {
-        const router = zvm.Router.init(&paths, io, gpa, init.environ_map);
-        try router.routeAndExec(cwd, args[1..]);
+    if (args.len > 0) {
+        if (zvm.Router.isZigShim(args[0])) {
+            const router = zvm.Router.init(&paths, io, gpa, init.environ_map);
+            try router.routeAndExec(cwd, args[1..]);
+        }
+        if (zvm.Router.isZlsShim(args[0])) {
+            const router = zvm.Router.init(&paths, io, gpa, init.environ_map);
+            try router.routeAndExecZls(cwd, args[1..]);
+        }
     }
 
     var wbuf: [1024]u8 = undefined;
@@ -176,6 +184,7 @@ test "buildRootCommand registers expected subcommands" {
         "config",
         "env",
         "completions",
+        "zls",
     };
 
     for (expected) |name| {
@@ -190,4 +199,5 @@ test "buildRootCommand registers expected subcommands" {
     _ = config_cmd;
     _ = env_cmd;
     _ = completions_cmd;
+    _ = zls_cmd;
 }

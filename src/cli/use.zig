@@ -5,6 +5,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 const report = @import("report.zig");
+const zls_cmd = @import("zls.zig");
 
 const UseError = zvm.errors.CliError ||
     std.mem.Allocator.Error ||
@@ -23,12 +24,19 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .description = "Installed version to set as global default",
         .required = true,
     });
+    try cmd.addFlag(.{
+        .name = "with-zls",
+        .description = "Also install/activate the paired ZLS release if missing",
+        .type = .Bool,
+        .default_value = .{ .Bool = false },
+    });
     return cmd;
 }
 
-fn handle(ctx: zli.CommandContext) UseError!void {
+fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
     const raw_version = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
+    const with_zls = ctx.flag("with-zls", bool);
 
     const parsed = zvm.Version.parse(raw_version) catch {
         try app.reporter.fail("Invalid Zig version '{s}'.\n", .{raw_version});
@@ -46,6 +54,13 @@ fn handle(ctx: zli.CommandContext) UseError!void {
 
     try app.paths.writeDefaultVersion(ctx.io, canonical);
     try app.reporter.success("Global default Zig version set to {s}.\n", .{canonical});
+
+    if (with_zls) {
+        if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+            try zls_cmd.installZlsWithSpinner(app, ctx, canonical, false);
+        }
+        try app.paths.writeZlsDefaultVersion(ctx.io, canonical);
+    }
 
     var shim_status = zvm.shim.inspectShim(app.paths, ctx.io, ctx.allocator, null) catch null;
     defer if (shim_status) |*s| s.deinit(ctx.allocator);

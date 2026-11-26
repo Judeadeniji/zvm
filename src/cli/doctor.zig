@@ -69,6 +69,37 @@ fn handle(ctx: zli.CommandContext) !void {
         },
     }
 
+    // 2b. ZLS shim verification
+    const zls_shim_path = try app.paths.zlsShimPath(ctx.allocator);
+    defer ctx.allocator.free(zls_shim_path);
+
+    var zls_shim_status = try zvm.shim.inspectShimFor(app.paths, ctx.io, ctx.allocator, .zls, self_exe);
+    defer zls_shim_status.deinit(ctx.allocator);
+
+    if (zls_shim_status == .wrong_target and zvm.shim.isZvmExePath(zls_shim_status.wrong_target)) {
+        const valid_target = try ctx.allocator.dupe(u8, zls_shim_status.wrong_target);
+        zls_shim_status.deinit(ctx.allocator);
+        zls_shim_status = .{ .valid = valid_target };
+    }
+
+    switch (zls_shim_status) {
+        .valid => |target| {
+            try app.reporter.status(.ok, "ZLS shim: {s} -> {s}\n", .{ zls_shim_path, target });
+        },
+        .missing => {
+            try app.reporter.status(.info, "ZLS shim: not configured at {s} (run 'zvm setup')\n", .{zls_shim_path});
+        },
+        .broken_symlink => |target| {
+            try app.reporter.status(.fail, "ZLS shim symlink is broken: {s} -> {s} (run 'zvm setup --force')\n", .{ zls_shim_path, target });
+        },
+        .wrong_target => |target| {
+            try app.reporter.status(.warn, "ZLS shim points to a non-zvm executable: {s} -> {s} (run 'zvm setup --force')\n", .{ zls_shim_path, target });
+        },
+        .not_a_symlink => {
+            try app.reporter.status(.warn, "{s} is a regular file, not a zvm symlink (run 'zvm setup --force')\n", .{zls_shim_path});
+        },
+    }
+
     // 3. PATH ordering check
     var path_check = try zvm.shim.checkPathOrder(app.paths, ctx.io, ctx.allocator, ctx.environ_map);
     defer path_check.deinit(ctx.allocator);
@@ -98,6 +129,10 @@ fn handle(ctx: zli.CommandContext) !void {
         try app.reporter.muted("       Next: Run 'zvm install <version>' (run 'zvm list-remote' to see available versions).\n", .{});
     }
 
+    const zls_versions = try app.paths.listInstalledZlsVersions(ctx.io, ctx.allocator);
+    defer zvm.Paths.freeInstalledVersions(ctx.allocator, zls_versions);
+    try app.reporter.status(.info, "Installed ZLS versions: {d}\n", .{zls_versions.len});
+
     // 5. Active version resolution in current dir
     var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
         .exact = flags.exactOverride(ctx),
@@ -118,4 +153,16 @@ fn handle(ctx: zli.CommandContext) !void {
     const is_installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version);
     const state = if (is_installed) "installed" else "not installed";
     try app.reporter.status(.info, "Active version in '{s}': {s} ({s})\n", .{ app.cwd, resolved.version, state });
+
+    if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, resolved.version)) {
+        const zls_meta = app.paths.readZlsVersionMeta(ctx.io, ctx.allocator, resolved.version) catch null;
+        defer if (zls_meta) |m| ctx.allocator.free(m);
+        if (zls_meta) |m| {
+            try app.reporter.status(.ok, "Paired ZLS for Zig {s}: {s}\n", .{ resolved.version, m });
+        } else {
+            try app.reporter.status(.ok, "Paired ZLS for Zig {s}: installed\n", .{resolved.version});
+        }
+    } else {
+        try app.reporter.status(.info, "Paired ZLS for Zig {s}: not installed (optional: 'zvm zls install')\n", .{resolved.version});
+    }
 }

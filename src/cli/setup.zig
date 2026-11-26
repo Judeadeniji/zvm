@@ -47,6 +47,23 @@ fn handle(ctx: zli.CommandContext) !void {
         .already_configured => try app.reporter.info("Zig shim is already configured: {s} -> {s}\n", .{ res.shim_path, res.target_path }),
     }
 
+    var zls_res = zvm.shim.setupShimFor(app.paths, ctx.io, ctx.allocator, .zls, self_exe, force) catch |err| switch (err) {
+        zvm.errors.ShimError.ShimAlreadyExists => {
+            const zls_shim_p = try app.paths.zlsShimPath(ctx.allocator);
+            defer ctx.allocator.free(zls_shim_p);
+            try app.reporter.warn("'{s}' already exists and does not point to this zvm binary (re-run with '--force' to update).\n", .{zls_shim_p});
+            return;
+        },
+        else => return err,
+    };
+    defer zls_res.deinit(ctx.allocator);
+
+    switch (zls_res.outcome) {
+        .created => try app.reporter.success("Created zls shim: {s} -> {s}\n", .{ zls_res.shim_path, zls_res.target_path }),
+        .updated => try app.reporter.success("Updated zls shim: {s} -> {s}\n", .{ zls_res.shim_path, zls_res.target_path }),
+        .already_configured => try app.reporter.info("ZLS shim is already configured: {s} -> {s}\n", .{ zls_res.shim_path, zls_res.target_path }),
+    }
+
     var path_check = try zvm.shim.checkPathOrder(app.paths, ctx.io, ctx.allocator, ctx.environ_map);
     defer path_check.deinit(ctx.allocator);
 

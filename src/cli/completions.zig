@@ -64,14 +64,21 @@ const bash_script =
     \\    local cur prev
     \\    cur="${COMP_WORDS[COMP_CWORD]}"
     \\    prev="${COMP_WORDS[COMP_CWORD-1]}"
-    \\    local cmds="install use pin list list-remote current which uninstall setup shim doctor clean config env completions"
+    \\    local cmds="install use pin list list-remote current which uninstall setup shim doctor clean config env completions zls"
     \\    if [[ ${COMP_CWORD} -eq 1 ]]; then
     \\        COMPREPLY=( $(compgen -W "${cmds} --help --version" -- "${cur}") )
     \\        return 0
     \\    fi
     \\    case "${COMP_WORDS[1]}" in
-    \\        install) COMPREPLY=( $(compgen -W "master --force --exact --minisig-key --no-minisig --help" -- "${cur}") ) ;;
-    \\        use|uninstall)
+    \\        install) COMPREPLY=( $(compgen -W "master --force --exact --with-zls --minisig-key --no-minisig --help" -- "${cur}") ) ;;
+    \\        use)
+    \\            local installed=""
+    \\            if command -v zvm >/dev/null 2>&1; then
+    \\                installed="$(zvm list 2>/dev/null | sed 's/^[* ]*//' | awk '{print $1}')"
+    \\            fi
+    \\            COMPREPLY=( $(compgen -W "${installed} --with-zls --help" -- "${cur}") )
+    \\            ;;
+    \\        uninstall)
     \\            local installed=""
     \\            if command -v zvm >/dev/null 2>&1; then
     \\                installed="$(zvm list 2>/dev/null | sed 's/^[* ]*//' | awk '{print $1}')"
@@ -93,7 +100,14 @@ const bash_script =
     \\                COMPREPLY=( $(compgen -W "on off toggle --help" -- "${cur}") )
     \\            fi
     \\            ;;
-    \\        env) COMPREPLY=( $(compgen -W "bash zsh fish powershell --auto-install --help" -- "${cur}") ) ;;
+    \\        zls)
+    \\            if [[ ${COMP_CWORD} -eq 2 ]]; then
+    \\                COMPREPLY=( $(compgen -W "install update list use which uninstall --help" -- "${cur}") )
+    \\            else
+    \\                COMPREPLY=( $(compgen -W "--force --exact --help" -- "${cur}") )
+    \\            fi
+    \\            ;;
+    \\        env) COMPREPLY=( $(compgen -W "bash zsh fish powershell --auto-install --editor --help" -- "${cur}") ) ;;
     \\        completions) COMPREPLY=( $(compgen -W "bash zsh fish powershell --help" -- "${cur}") ) ;;
     \\        list-remote) COMPREPLY=( $(compgen -W "--all --help" -- "${cur}") ) ;;
     \\        clean) COMPREPLY=( $(compgen -W "--dry-run --help" -- "${cur}") ) ;;
@@ -125,6 +139,7 @@ const zsh_script =
     \\        'config:Inspect or toggle persistent zvm settings'
     \\        'env:Print shell PATH and hook setup script'
     \\        'completions:Generate shell completion script'
+    \\        'zls:Manage ZLS versions paired to Zig'
     \\    )
     \\    _arguments -C \
     \\        '(-h --help)'{-h,--help}'[Show help]' \
@@ -135,9 +150,11 @@ const zsh_script =
     \\        args)
     \\            case "$line[1]" in
     \\                completions) _values 'shell' bash zsh fish powershell ;;
-    \\                env) _arguments '--auto-install[Enable ZVM_AUTO_INSTALL=1]' '1:shell:(bash zsh fish powershell)' ;;
+    \\                env) _arguments '--auto-install[Enable ZVM_AUTO_INSTALL=1]' '--editor[Print editor ZLS config]:editor:(vscode nvim helix emacs zed)' '1:shell:(bash zsh fish powershell)' ;;
     \\                config) _arguments '1:key:(auto-install exact)' '2:value:(on off toggle)' ;;
-    \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--exact[Install exact minimum_zig_version]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
+    \\                zls) _values 'zls subcommand' install update list use which uninstall ;;
+    \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--exact[Install exact minimum_zig_version]' '--with-zls[Also install compatible ZLS]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
+    \\                use) _arguments '--with-zls[Also install/activate paired ZLS]' ;;
     \\                current|doctor|list|which) _arguments '--exact[Treat minimum_zig_version as exact]' ;;
     \\                clean) _arguments '(-n --dry-run)'{-n,--dry-run}'[Dry run]' ;;
     \\                list-remote) _arguments '(-a --all)'{-a,--all}'[Show all releases]' ;;
@@ -152,7 +169,7 @@ const zsh_script =
 
 const fish_script =
     \\complete -c zvm -f
-    \\set -l zvm_cmds install use pin list list-remote current which uninstall setup shim doctor clean config env completions
+    \\set -l zvm_cmds install use pin list list-remote current which uninstall setup shim doctor clean config env completions zls
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a install -d "Install a Zig version"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a use -d "Switch global default Zig version"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a pin -d "Pin version in .zig-version"
@@ -167,12 +184,16 @@ const fish_script =
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a config -d "Inspect or toggle persistent settings"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a env -d "Print shell PATH and hook script"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a completions -d "Generate shell completions"
+    \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a zls -d "Manage ZLS versions"
     \\complete -c zvm -n "__fish_seen_subcommand_from completions env" -a "bash zsh fish powershell"
     \\complete -c zvm -n "__fish_seen_subcommand_from env" -l auto-install -d "Enable ZVM_AUTO_INSTALL=1"
+    \\complete -c zvm -n "__fish_seen_subcommand_from env" -l editor -r -a "vscode nvim helix emacs zed" -d "Print editor ZLS config"
+    \\complete -c zvm -n "__fish_seen_subcommand_from zls" -a "install update list use which uninstall"
     \\complete -c zvm -n "__fish_seen_subcommand_from config" -a "auto-install exact on off toggle"
     \\complete -c zvm -n "__fish_seen_subcommand_from current doctor list which" -l exact -d "Treat minimum_zig_version as exact"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -s f -l force -d "Force reinstall"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l exact -d "Install exact minimum_zig_version"
+    \\complete -c zvm -n "__fish_seen_subcommand_from install use" -l with-zls -d "Also install compatible ZLS"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l minisig-key -r -d "Override Minisign public key"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l no-minisig -d "Skip minisig verification"
     \\complete -c zvm -n "__fish_seen_subcommand_from clean" -s n -l dry-run -d "Preview cleanup"
@@ -184,7 +205,7 @@ const fish_script =
 const powershell_script =
     \\Register-ArgumentCompleter -Native -CommandName zvm -ScriptBlock {
     \\    param($wordToComplete, $commandAst, $cursorPosition)
-    \\    $cmds = @('install', 'use', 'pin', 'list', 'list-remote', 'current', 'which', 'uninstall', 'setup', 'shim', 'doctor', 'clean', 'config', 'env', 'completions')
+    \\    $cmds = @('install', 'use', 'pin', 'list', 'list-remote', 'current', 'which', 'uninstall', 'setup', 'shim', 'doctor', 'clean', 'config', 'env', 'completions', 'zls')
     \\    $tokens = $commandAst.CommandElements
     \\    if ($tokens.Count -le 2) {
     \\        $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -195,7 +216,11 @@ const powershell_script =
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    } elseif ($tokens[1].Extent.Text -eq 'env') {
-    \\        @('bash', 'zsh', 'fish', 'powershell', '--auto-install') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    \\        @('bash', 'zsh', 'fish', 'powershell', '--auto-install', '--editor') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    \\        }
+    \\    } elseif ($tokens[1].Extent.Text -eq 'zls') {
+    \\        @('install', 'update', 'list', 'use', 'which', 'uninstall') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    } elseif ($tokens[1].Extent.Text -eq 'config') {
@@ -208,7 +233,7 @@ const powershell_script =
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    } elseif ($tokens[1].Extent.Text -eq 'install') {
-    \\        @('master', '--force', '--exact', '--minisig-key', '--no-minisig') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    \\        @('master', '--force', '--exact', '--with-zls', '--minisig-key', '--no-minisig') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    }
@@ -229,4 +254,7 @@ test "Shell.parse and render completions" {
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "--auto-install") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "--exact") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "config:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "zls:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "--with-zls") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "--editor") != null);
 }
