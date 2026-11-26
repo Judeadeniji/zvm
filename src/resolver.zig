@@ -177,15 +177,25 @@ const max_zon_bytes = 1024 * 1024;
 /// Upper bound for `.zig-version`; anything larger is not a version string.
 const max_zig_version_bytes = 64 * 1024;
 
+/// Formats `dir` + separator + `name` into `buf`, or returns null when it does
+/// not fit. Avoids heap-joining candidate paths on every ancestor level.
+fn appendName(buf: []u8, dir: []const u8, name: []const u8) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, name }) catch null;
+}
+
 /// Walks parent directories from `start_dir` to find `.minimum_zig_version` in `build.zig.zon`.
 pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []const u8) !?[]u8 {
-    var current_dir = try allocator.dupe(u8, start_dir);
-    defer allocator.free(current_dir);
+    var walk_buf = try allocator.alloc(u8, start_dir.len);
+    defer allocator.free(walk_buf);
+    @memcpy(walk_buf, start_dir);
+    var current_len: usize = start_dir.len;
 
     const cwd = Io.Dir.cwd();
+    var path_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+
     while (true) {
-        const zon_path = try std.fs.path.join(allocator, &.{ current_dir, "build.zig.zon" });
-        defer allocator.free(zon_path);
+        const current_dir = walk_buf[0..current_len];
+        const zon_path = appendName(&path_buf, current_dir, "build.zig.zon") orelse break;
 
         const zon_bytes: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -198,13 +208,12 @@ pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []cons
             }
         }
 
-        const parent = std.fs.path.dirname(current_dir);
-        if (parent == null or std.mem.eql(u8, parent.?, current_dir)) break;
-
-        const next_parent = try allocator.dupe(u8, parent.?);
-        allocator.free(current_dir);
-        current_dir = next_parent;
+                const parent = std.fs.path.dirname(current_dir) orelse break;
+        if (parent.len == 0 or std.mem.eql(u8, parent, current_dir)) break;
+        if (!std.mem.eql(u8, walk_buf[0..parent.len], parent)) break;
+        current_len = parent.len;
     }
+
     return null;
 }
 
@@ -295,88 +304,91 @@ pub fn resolveWithOptions(
         }
     }
 
-    // 2. Ancestor directory walk-up
-    var current_dir = try allocator.dupe(u8, start_dir);
-    defer allocator.free(current_dir);
+    // 2. Ancestor directory walk-up.
+    // One owned buffer serves every level: a parent step only shortens it, and the
+    // candidate paths are formatted into a stack buffer rather than heap-joined,
+    // so a walk costs no allocations beyond the file contents actually read.
+    var walk_buf = try allocator.alloc(u8, start_dir.len);
+    defer allocator.free(walk_buf);
+    @memcpy(walk_buf, start_dir);
+    var current_len: usize = start_dir.len;
 
     const cwd = Io.Dir.cwd();
+    var path_buf: [Io.Dir.max_path_bytes]u8 = undefined;
 
     while (true) {
+        const current_dir = walk_buf[0..current_len];
+
         // 2a. Check for .zig-version
-        const zig_version_path = try std.fs.path.join(allocator, &.{ current_dir, ".zig-version" });
-        defer allocator.free(zig_version_path);
+        if (appendName(&path_buf, current_dir, ".zig-version")) |zig_version_path| {
+            const zig_version_text: ?[]u8 = cwd.readFileAlloc(io, zig_version_path, allocator, .limited(max_zig_version_bytes)) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => return err,
+            };
+            defer if (zig_version_text) |text| allocator.free(text);
+            if (zig_version_text) |text| {
+                const trimmed = std.mem.trim(u8, text, " \t\r\n");
+                if (trimmed.len > 0) {
+                    // A `.zig-version` file is authoritative: an unparseable file must be
+                    // reported, never treated as a version name or silently skipped.
+                    const constraint = Constraint.parse(trimmed) catch
+                        return ResolveError.InvalidZigVersionConstraint;
 
-        const zig_version_text: ?[]u8 = cwd.readFileAlloc(io, zig_version_path, allocator, .limited(max_zig_version_bytes)) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => return err,
-        };
-        defer if (zig_version_text) |text| allocator.free(text);
-        if (zig_version_text) |text| {
-            const trimmed = std.mem.trim(u8, text, " \t\r\n");
-            if (trimmed.len > 0) {
-                // A `.zig-version` file is authoritative: an unparseable file must be
-                // reported, never treated as a version name or silently skipped.
-                const constraint = Constraint.parse(trimmed) catch
-                    return ResolveError.InvalidZigVersionConstraint;
-
-                if (constraint.exactPin()) |exact_pin| {
-                    return makeResolved(
-                        allocator,
-                        try exact_pin.toString(allocator),
-                        .zig_version_file,
-                        zig_version_path,
-                    );
+                    if (constraint.exactPin()) |exact_pin| {
+                        return makeResolved(
+                            allocator,
+                            try exact_pin.toString(allocator),
+                            .zig_version_file,
+                            zig_version_path,
+                        );
+                    }
+                    if (try findHighestMatchingInstalled(paths, io, allocator, constraint)) |matched| {
+                        return makeResolved(allocator, matched, .zig_version_file, zig_version_path);
+                    }
+                    return ResolveError.UnmatchedZigVersionConstraint;
                 }
-                if (try findHighestMatchingInstalled(paths, io, allocator, constraint)) |matched| {
-                    return makeResolved(allocator, matched, .zig_version_file, zig_version_path);
-                }
-                return ResolveError.UnmatchedZigVersionConstraint;
             }
         }
 
         // 2b. Check for build.zig.zon
-        const zon_path = try std.fs.path.join(allocator, &.{ current_dir, "build.zig.zon" });
-        defer allocator.free(zon_path);
-
-        const zon_text: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => return err,
-        };
-        defer if (zon_text) |text| allocator.free(text);
-        if (zon_text) |zon_bytes| {
-            const min_str_owned = try extractMinimumZigVersion(allocator, zon_bytes);
-            defer if (min_str_owned) |s| allocator.free(s);
-            if (min_str_owned) |min_str| {
-                const min_ver = Version.parse(min_str) catch null;
-                if (min_ver) |mv| {
-                    if (exact) {
-                        // Return the declared version even when it is not installed;
-                        // `zvm current` can report it and the router can install it.
-                        return makeResolved(
-                            allocator,
-                            try mv.toString(allocator),
-                            .build_zig_zon,
-                            zon_path,
-                        );
-                    }
-                    if (try findHighestSatisfyingInstalled(paths, io, allocator, mv)) |matched| {
-                        return makeResolved(allocator, matched, .build_zig_zon, zon_path);
-                    } else {
-                        return ResolveError.NoCompatibleVersionInstalled;
+        if (appendName(&path_buf, current_dir, "build.zig.zon")) |zon_path| {
+            const zon_text: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => return err,
+            };
+            defer if (zon_text) |text| allocator.free(text);
+            if (zon_text) |zon_bytes| {
+                const min_str_owned = try extractMinimumZigVersion(allocator, zon_bytes);
+                defer if (min_str_owned) |s| allocator.free(s);
+                if (min_str_owned) |min_str| {
+                    const min_ver = Version.parse(min_str) catch null;
+                    if (min_ver) |mv| {
+                        if (exact) {
+                            // Return the declared version even when it is not installed;
+                            // `zvm current` can report it and the router can install it.
+                            return makeResolved(
+                                allocator,
+                                try mv.toString(allocator),
+                                .build_zig_zon,
+                                zon_path,
+                            );
+                        }
+                        if (try findHighestSatisfyingInstalled(paths, io, allocator, mv)) |matched| {
+                            return makeResolved(allocator, matched, .build_zig_zon, zon_path);
+                        } else {
+                            return ResolveError.NoCompatibleVersionInstalled;
+                        }
                     }
                 }
             }
         }
 
-        // Walk to parent directory
-        const parent = std.fs.path.dirname(current_dir);
-        if (parent == null or std.mem.eql(u8, parent.?, current_dir)) {
-            break;
-        }
-
-        const next_parent = try allocator.dupe(u8, parent.?);
-        allocator.free(current_dir);
-        current_dir = next_parent;
+        // Walk to the parent by shortening the buffer in place.
+        const parent = std.fs.path.dirname(current_dir) orelse break;
+        if (parent.len == 0 or std.mem.eql(u8, parent, current_dir)) break;
+        // `dirname` returns a prefix of the input; verify before reusing its length.
+        if (!std.mem.eql(u8, walk_buf[0..parent.len], parent)) break;
+        current_len = parent.len;
     }
 
     // 3. Global default
