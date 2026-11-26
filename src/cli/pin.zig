@@ -6,6 +6,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 const report = @import("report.zig");
+const zls_cmd = @import("zls.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -17,19 +18,19 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .description = "Version or constraint to pin (e.g. '0.17.0', '^0.17.0', '>=0.16.0', 'master')",
         .required = true,
     });
+    try cmd.addFlag(.{
+        .name = "with-zls",
+        .description = "Also install the compatible ZLS release if missing",
+        .type = .Bool,
+        .default_value = .{ .Bool = false },
+    });
     return cmd;
 }
 
-const PinError = zvm.errors.CliError ||
-    std.mem.Allocator.Error ||
-    std.Io.Writer.Error ||
-    std.Io.Dir.OpenError ||
-    std.Io.Dir.WriteFileError ||
-    report.Reported;
-
-fn handle(ctx: zli.CommandContext) PinError!void {
+fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
     const raw_input = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
+    const with_zls = ctx.flag("with-zls", bool);
     const trimmed = std.mem.trim(u8, raw_input, " \t\r\n");
 
     const constraint = zvm.Constraint.parse(trimmed) catch {
@@ -61,11 +62,17 @@ fn handle(ctx: zli.CommandContext) PinError!void {
         if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, pinned_text)) {
             try app.reporter.note("Zig version '{s}' is not installed yet. Run 'zvm install {s}' to install it.\n", .{ pinned_text, pinned_text });
         }
+        if (with_zls and !app.paths.isZlsInstalled(ctx.io, ctx.allocator, pinned_text)) {
+            try zls_cmd.installZlsWithSpinner(app, ctx, pinned_text, false);
+        }
     } else {
         const matched = try zvm.resolver.findHighestMatchingInstalled(app.paths, ctx.io, ctx.allocator, constraint);
         defer if (matched) |m| ctx.allocator.free(m);
         if (matched) |m| {
             try app.reporter.info("Resolved locally installed version matching '{s}': {s}\n", .{ pinned_text, m });
+            if (with_zls and !app.paths.isZlsInstalled(ctx.io, ctx.allocator, m)) {
+                try zls_cmd.installZlsWithSpinner(app, ctx, m, false);
+            }
         } else {
             try app.reporter.note("No locally installed Zig version satisfies '{s}'.\n", .{pinned_text});
         }

@@ -158,7 +158,7 @@ const zsh_script =
     \\                upgrade|self-update) _arguments '(-c --check)'{-c,--check}'[Check for updates only]' '--nightly[Upgrade to nightly build]' '(-f --force)'{-f,--force}'[Force reinstall]' ;;
     \\                zls) _values 'zls subcommand' install update list use which uninstall ;;
     \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--exact[Install exact minimum_zig_version]' '--with-zls[Also install compatible ZLS]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
-    \\                use) _arguments '--with-zls[Also install/activate paired ZLS]' ;;
+    \\                use|pin) _arguments '--with-zls[Also install/activate paired ZLS]' ;;
     \\                current|doctor|list|which) _arguments '--exact[Treat minimum_zig_version as exact]' ;;
     \\                clean) _arguments '(-n --dry-run)'{-n,--dry-run}'[Dry run]' ;;
     \\                list-remote) _arguments '(-a --all)'{-a,--all}'[Show all releases]' ;;
@@ -201,7 +201,7 @@ const fish_script =
     \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -s c -l check -d "Check for updates only"
     \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -l nightly -d "Upgrade to nightly build"
     \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -s f -l force -d "Force reinstall"
-    \\complete -c zvm -n "__fish_seen_subcommand_from install use" -l with-zls -d "Also install compatible ZLS"
+    \\complete -c zvm -n "__fish_seen_subcommand_from install use pin" -l with-zls -d "Also install compatible ZLS"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l minisig-key -r -d "Override Minisign public key"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l no-minisig -d "Skip minisig verification"
     \\complete -c zvm -n "__fish_seen_subcommand_from clean" -s n -l dry-run -d "Preview cleanup"
