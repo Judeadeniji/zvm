@@ -3,12 +3,15 @@
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
-    return zli.Command.init(init_options, .{
+    const cmd = try zli.Command.init(init_options, .{
         .name = "current",
         .description = "Show the currently active Zig version for the current directory",
     }, handle);
+    try cmd.addFlag(flags.exact);
+    return cmd;
 }
 
 fn sourceLabel(source: zvm.ResolutionSource) []const u8 {
@@ -23,7 +26,9 @@ fn sourceLabel(source: zvm.ResolutionSource) []const u8 {
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
 
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch |err| switch (err) {
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch |err| switch (err) {
         zvm.errors.ResolveError.NoVersionConfigured => {
             try app.reporter.fail("No Zig version is configured.\n", .{});
             try app.reporter.hint("Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n", .{});

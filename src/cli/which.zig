@@ -5,6 +5,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 const report = @import("report.zig");
+const flags = @import("flags.zig");
 
 const WhichError = zvm.errors.CliError || zvm.resolver.ResolveError || std.Io.Writer.Error || report.Reported;
 
@@ -13,6 +14,7 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .name = "which",
         .description = "Display the binary path of the active or specified Zig version",
     }, handle);
+    try cmd.addFlag(flags.exact);
     try cmd.addPositionalArg(.{
         .name = "version",
         .description = "Optional version to query path for",
@@ -44,7 +46,9 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
         return;
     }
 
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch |err| {
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch |err| {
         try app.reporter.reportError(err);
         return error.Reported;
     };

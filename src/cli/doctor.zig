@@ -5,12 +5,15 @@ const Io = std.Io;
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
-    return zli.Command.init(init_options, .{
+    const cmd = try zli.Command.init(init_options, .{
         .name = "doctor",
         .description = "Check zvm directories, zig shim status, and PATH precedence",
     }, handle);
+    try cmd.addFlag(flags.exact);
+    return cmd;
 }
 
 fn handle(ctx: zli.CommandContext) !void {
@@ -85,7 +88,9 @@ fn handle(ctx: zli.CommandContext) !void {
     try app.reporter.status(.info, "Installed Zig versions: {d}\n", .{versions.len});
 
     // 5. Active version resolution in current dir
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch |err| {
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch |err| {
         const reason: []const u8 = switch (err) {
             zvm.errors.ResolveError.NoVersionConfigured => "no version configured",
             zvm.errors.ResolveError.NoCompatibleVersionInstalled => "no installed version satisfies the project constraint",

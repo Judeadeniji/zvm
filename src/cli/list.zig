@@ -4,12 +4,15 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
-    return zli.Command.init(init_options, .{
+    const cmd = try zli.Command.init(init_options, .{
         .name = "list",
         .description = "List locally installed Zig versions",
     }, handle);
+    try cmd.addFlag(flags.exact);
+    return cmd;
 }
 
 fn lessThanVersion(_: void, a: []const u8, b: []const u8) bool {
@@ -33,7 +36,9 @@ fn handle(ctx: zli.CommandContext) !void {
     std.mem.sort([]u8, versions, {}, lessThanVersion);
 
     var active_version: ?[]const u8 = null;
-    var resolved = zvm.resolve(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd) catch null;
+    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    }) catch null;
     defer if (resolved) |*r| r.deinit(ctx.allocator);
     if (resolved) |r| {
         active_version = r.version;

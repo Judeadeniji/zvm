@@ -13,6 +13,7 @@ A fast, transparent Zig version manager written in Zig.
      - `.zig-version` file (exact version, `master`, or semver constraints like `^0.17.0`, `~0.17.0`, `>=0.16.0 <0.18.0`).
      - `build.zig.zon` project config (honors `minimum_zig_version` by picking the newest compatible installed version).
   3. **Global Default**: User-configured fallback (`default` in ZVM's data directory).
+- **Exact Minimum Mode**: Pass `--exact` to `zvm current`, `zvm which`, `zvm doctor`, or `zvm list`, or set `ZVM_EXACT=1`, to treat `build.zig.zon`'s `minimum_zig_version` as an exact requirement instead of a lower bound.
 - **Cryptographic & Integrity Verification**: Verifies downloaded archives with both SHA-256 checksums and Minisign (`Ed25519` + `BLAKE2b-512`) signatures.
 - **Release & Cache Management**: Fetches `https://ziglang.org/download/index.json`, unpacks `.tar.xz`/`.tar.gz`/`.zip`, tracks `master` dev versions, and supports cache cleanup (`zvm clean`).
 - **Shell Integration & Diagnostics**: Includes `zvm setup` (`zvm shim`), `zvm doctor`, `zvm env`, `zvm completions`, and `ZVM_AUTO_INSTALL`.
