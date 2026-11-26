@@ -20,9 +20,17 @@ Install, switch, and manage multiple [Zig](https://ziglang.org) compiler version
 
 ### 1. Install `zvm`
 
-Download the archive for your platform from [GitHub Releases](https://github.com/Judeadeniji/zvm/releases), extract it, and place `zvm` in your `PATH` (for example `~/.local/bin/zvm`).
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Judeadeniji/zvm/main/install.sh | sh
+```
 
-*(Or [build from source](#building-from-source) if you already have Zig 0.17.0.)*
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Judeadeniji/zvm/main/install.ps1 | iex
+```
+
+Or download a prebuilt archive from [GitHub Releases](https://github.com/Judeadeniji/zvm/releases), use the manifests in `packaging/` (Homebrew, Scoop, AUR), or [build from source](#building-from-source).
 
 ### 2. Set up the `zig` shim & shell
 

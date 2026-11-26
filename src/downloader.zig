@@ -19,6 +19,19 @@ pub const ChecksumError = errors.ChecksumError;
 pub const DownloadError = errors.DownloadError;
 
 pub const index_url = "https://ziglang.org/download/index.json";
+pub const community_mirrors_url = "https://ziglang.org/download/community-mirrors.txt";
+pub const fallback_mirrors = [_][]const u8{
+    "https://pkg.hexops.org/zig",
+    "https://zigmirror.hryx.net/zig",
+    "https://zig.linus.dev/zig",
+    "https://zig.squirl.dev",
+    "https://zig.mirror.mschae23.de/zig",
+    "https://ziglang.freetls.fastly.net",
+    "https://zig.tilok.dev",
+    "https://zig-mirror.tsimnet.eu/zig",
+    "https://zig.karearl.com/zig",
+    "https://pkg.earth/zig",
+};
 
 pub const ArtifactInfo = struct {
     version_key: []const u8,
@@ -611,6 +624,87 @@ pub fn ensureCachedArchive(
     return cache_path;
 }
 
+/// Parses newline-separated mirror base URLs from `community-mirrors.txt`.
+pub fn parseMirrorList(allocator: Allocator, text: []const u8) Allocator.Error![][]u8 {
+    var list: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (list.items) |m| allocator.free(m);
+        list.deinit(allocator);
+    }
+
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        if (!std.mem.startsWith(u8, line, "https://") and !std.mem.startsWith(u8, line, "http://")) continue;
+        try list.append(allocator, try allocator.dupe(u8, std.mem.trimEnd(u8, line, "/")));
+    }
+
+    return try list.toOwnedSlice(allocator);
+}
+
+pub fn freeMirrorList(allocator: Allocator, mirrors: [][]u8) void {
+    for (mirrors) |m| allocator.free(m);
+    allocator.free(mirrors);
+}
+
+/// Builds a Zig community mirror tarball URL (`<mirror>/<archive>?source=zvm`).
+pub fn buildMirrorTarballUrl(allocator: Allocator, mirror_base: []const u8, archive_name: []const u8) Allocator.Error![]u8 {
+    const trimmed = std.mem.trimEnd(u8, mirror_base, "/");
+    return try allocator.print("{s}/{s}?source=zvm", .{ trimmed, archive_name });
+}
+
+fn ensureCachedZigArchive(
+    paths: *const Paths,
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    tarball: []const u8,
+    shasum: []const u8,
+    size_str: []const u8,
+    progress: ?ProgressCallback,
+) ![]u8 {
+    return ensureCachedArchive(paths, io, allocator, environ_map, tarball, shasum, size_str, progress) catch |primary_err| {
+        const archive_name = std.fs.path.basename(tarball);
+        const cache_path = try std.fs.path.join(allocator, &.{ paths.cache_dir, archive_name });
+        errdefer allocator.free(cache_path);
+
+        const expected_size: ?u64 = if (size_str.len > 0)
+            std.fmt.parseInt(u64, size_str, 10) catch null
+        else
+            null;
+
+        const fetched_list = fetchUrl(io, allocator, environ_map, community_mirrors_url) catch null;
+        defer if (fetched_list) |b| allocator.free(b);
+
+        var dynamic_mirrors: ?[][]u8 = null;
+        defer if (dynamic_mirrors) |dm| freeMirrorList(allocator, dm);
+
+        const mirror_slice: []const []const u8 = if (fetched_list) |body| blk: {
+            dynamic_mirrors = try parseMirrorList(allocator, body);
+            if (dynamic_mirrors.?.len > 0) break :blk dynamic_mirrors.?;
+            break :blk &fallback_mirrors;
+        } else &fallback_mirrors;
+
+        for (mirror_slice) |mirror_base| {
+            const mirror_url = try buildMirrorTarballUrl(allocator, mirror_base, archive_name);
+            defer allocator.free(mirror_url);
+
+            downloadToFile(io, allocator, environ_map, mirror_url, cache_path, expected_size, progress) catch {
+                Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+                continue;
+            };
+            verifyFileSha256(io, cache_path, shasum) catch {
+                Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+                continue;
+            };
+            return cache_path;
+        }
+
+        return primary_err;
+    };
+}
+
 /// Downloads, verifies, and installs the requested Zig version into `paths.versions_dir`.
 pub fn installVersion(
     paths: *const Paths,
@@ -656,7 +750,7 @@ pub fn installVersion(
         }
     }
 
-    const cache_path = try ensureCachedArchive(
+    const cache_path = try ensureCachedZigArchive(
         paths,
         io,
         allocator,
@@ -877,4 +971,28 @@ test "extractArchive unpacks real tar.xz, tar.gz, and zip stripping root directo
         const std_content = try cwd.readFile(io, std_path, &buf);
         try std.testing.expectEqualStrings("const x = 1;\n", std_content);
     }
+}
+
+test "parseMirrorList and buildMirrorTarballUrl handle community mirrors" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\# community mirrors
+        \\https://pkg.hexops.org/zig/
+        \\
+        \\https://zigmirror.hryx.net/zig
+        \\invalid-line
+    ;
+    const mirrors = try parseMirrorList(allocator, raw);
+    defer freeMirrorList(allocator, mirrors);
+
+    try std.testing.expectEqual(@as(usize, 2), mirrors.len);
+    try std.testing.expectEqualStrings("https://pkg.hexops.org/zig", mirrors[0]);
+    try std.testing.expectEqualStrings("https://zigmirror.hryx.net/zig", mirrors[1]);
+
+    const url = try buildMirrorTarballUrl(allocator, "https://pkg.hexops.org/zig/", "zig-linux-x86_64-0.17.0.tar.xz");
+    defer allocator.free(url);
+    try std.testing.expectEqualStrings(
+        "https://pkg.hexops.org/zig/zig-linux-x86_64-0.17.0.tar.xz?source=zvm",
+        url,
+    );
 }

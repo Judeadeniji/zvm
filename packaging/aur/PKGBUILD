@@ -1,0 +1,22 @@
+# Maintainer: Jude Adeniji <https://github.com/Judeadeniji/zvm>
+pkgname=zvm-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Fast, zero-dependency Zig version manager written in Zig"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Judeadeniji/zvm"
+license=('MIT')
+provides=('zvm')
+conflicts=('zvm')
+source_x86_64=("https://github.com/Judeadeniji/zvm/releases/download/v${pkgver}/zvm-v${pkgver}-x86_64-linux.tar.gz")
+source_aarch64=("https://github.com/Judeadeniji/zvm/releases/download/v${pkgver}/zvm-v${pkgver}-aarch64-linux.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  local _arch_dir="${CARCH}"
+  cd "${srcdir}/zvm-v${pkgver}-${_arch_dir}-linux"
+  install -Dm755 zvm "${pkgdir}/usr/bin/zvm"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
