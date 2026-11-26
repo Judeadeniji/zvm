@@ -225,9 +225,12 @@ pub fn upgradeSelf(
     defer info.deinit(allocator);
 
     if (!options.force and !needsUpgrade(options.current_version, info.tag_name)) {
+        const from_copy = try allocator.dupe(u8, options.current_version);
+        errdefer allocator.free(from_copy);
+        const tag_copy = try allocator.dupe(u8, info.tag_name);
         return .{
-            .from_version = try allocator.dupe(u8, options.current_version),
-            .to_tag = try allocator.dupe(u8, info.tag_name),
+            .from_version = from_copy,
+            .to_tag = tag_copy,
             .checksum_verified = false,
             .already_up_to_date = true,
         };
@@ -264,9 +267,12 @@ pub fn upgradeSelf(
 
     try replaceSelfExecutable(io, allocator, self_exe, staged_bin);
 
+    const from_copy = try allocator.dupe(u8, options.current_version);
+    errdefer allocator.free(from_copy);
+    const tag_copy = try allocator.dupe(u8, info.tag_name);
     return .{
-        .from_version = try allocator.dupe(u8, options.current_version),
-        .to_tag = try allocator.dupe(u8, info.tag_name),
+        .from_version = from_copy,
+        .to_tag = tag_copy,
         .checksum_verified = checksum_verified,
         .already_up_to_date = false,
     };

@@ -31,6 +31,22 @@ pub const ResolvedVersion = struct {
     }
 };
 
+/// Builds a `ResolvedVersion`, taking ownership of `version` and freeing it again
+/// if copying the optional `source_path` fails.
+fn makeResolved(
+    allocator: Allocator,
+    version: []u8,
+    source: ResolutionSource,
+    source_path: ?[]const u8,
+) Allocator.Error!ResolvedVersion {
+    errdefer allocator.free(version);
+    return .{
+        .version = version,
+        .source = source,
+        .source_path = if (source_path) |p| try allocator.dupe(u8, p) else null,
+    };
+}
+
 pub const ResolveOptions = struct {
     /// Overrides `ZVM_EXACT` for this resolution. `null` leaves the environment
     /// variable in charge.
@@ -128,8 +144,11 @@ pub fn findHighestMatchingInstalled(
 
         if (best_ver == null or parsed.order(best_ver.?) == .gt) {
             best_ver = parsed;
+            // Allocate the replacement before freeing the old name so a failed
+            // allocation leaves `best_name` valid for the `errdefer` above.
+            const replacement = try allocator.dupe(u8, entry.name);
             if (best_name) |old| allocator.free(old);
-            best_name = try allocator.dupe(u8, entry.name);
+            best_name = replacement;
         }
     }
 
@@ -180,11 +199,7 @@ pub fn resolveWithOptions(
         if (env.get("ZIG_VERSION")) |zig_env| {
             const trimmed = std.mem.trim(u8, zig_env, " \t\r\n");
             if (trimmed.len > 0) {
-                return .{
-                    .version = try allocator.dupe(u8, trimmed),
-                    .source = .env_var,
-                    .source_path = null,
-                };
+                return makeResolved(allocator, try allocator.dupe(u8, trimmed), .env_var, null);
             }
         }
     }
@@ -210,18 +225,15 @@ pub fn resolveWithOptions(
                     return ResolveError.InvalidZigVersionConstraint;
 
                 if (constraint.exactPin()) |exact_pin| {
-                    return .{
-                        .version = try exact_pin.toString(allocator),
-                        .source = .zig_version_file,
-                        .source_path = try allocator.dupe(u8, zig_version_path),
-                    };
+                    return makeResolved(
+                        allocator,
+                        try exact_pin.toString(allocator),
+                        .zig_version_file,
+                        zig_version_path,
+                    );
                 }
                 if (try findHighestMatchingInstalled(paths, io, allocator, constraint)) |matched| {
-                    return .{
-                        .version = matched,
-                        .source = .zig_version_file,
-                        .source_path = try allocator.dupe(u8, zig_version_path),
-                    };
+                    return makeResolved(allocator, matched, .zig_version_file, zig_version_path);
                 }
                 return ResolveError.UnmatchedZigVersionConstraint;
             }
@@ -239,18 +251,15 @@ pub fn resolveWithOptions(
                     if (exact) {
                         // Return the declared version even when it is not installed;
                         // `zvm current` can report it and the router can install it.
-                        return .{
-                            .version = try mv.toString(allocator),
-                            .source = .build_zig_zon,
-                            .source_path = try allocator.dupe(u8, zon_path),
-                        };
+                        return makeResolved(
+                            allocator,
+                            try mv.toString(allocator),
+                            .build_zig_zon,
+                            zon_path,
+                        );
                     }
                     if (try findHighestSatisfyingInstalled(paths, io, allocator, mv)) |matched| {
-                        return .{
-                            .version = matched,
-                            .source = .build_zig_zon,
-                            .source_path = try allocator.dupe(u8, zon_path),
-                        };
+                        return makeResolved(allocator, matched, .build_zig_zon, zon_path);
                     } else {
                         return ResolveError.NoCompatibleVersionInstalled;
                     }
@@ -271,11 +280,7 @@ pub fn resolveWithOptions(
 
     // 3. Global default
     if (try paths.readDefaultVersion(io, allocator)) |def_v| {
-        return .{
-            .version = def_v,
-            .source = .global_default,
-            .source_path = try allocator.dupe(u8, paths.default_file),
-        };
+        return makeResolved(allocator, def_v, .global_default, paths.default_file);
     }
 
     return ResolveError.NoVersionConfigured;

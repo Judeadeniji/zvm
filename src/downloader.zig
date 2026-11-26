@@ -736,9 +736,12 @@ pub fn installVersion(
 
     const is_master = std.mem.eql(u8, version_key, "master");
     if (!options.force and !is_master and paths.isVersionInstalled(io, allocator, version_key)) {
+        const version_copy = try allocator.dupe(u8, version_key);
+        errdefer allocator.free(version_copy);
+        const resolved_copy = try allocator.dupe(u8, version_key);
         return .{
-            .version = try allocator.dupe(u8, version_key),
-            .resolved_version = try allocator.dupe(u8, version_key),
+            .version = version_copy,
+            .resolved_version = resolved_copy,
             .install_dir = install_dir,
             .already_installed = true,
         };
@@ -756,9 +759,12 @@ pub fn installVersion(
         const current_meta = paths.readVersionMeta(io, allocator, version_key) catch null;
         defer if (current_meta) |m| allocator.free(m);
         if (current_meta != null and std.mem.eql(u8, current_meta.?, artifact.resolved_version)) {
+            const version_copy = try allocator.dupe(u8, artifact.version_key);
+            errdefer allocator.free(version_copy);
+            const resolved_copy = try allocator.dupe(u8, artifact.resolved_version);
             return .{
-                .version = try allocator.dupe(u8, artifact.version_key),
-                .resolved_version = try allocator.dupe(u8, artifact.resolved_version),
+                .version = version_copy,
+                .resolved_version = resolved_copy,
                 .install_dir = install_dir,
                 .already_installed = true,
             };
@@ -800,9 +806,12 @@ pub fn installVersion(
     try extractArchive(io, allocator, cache_path, install_dir);
     try paths.writeVersionMeta(io, allocator, version_key, artifact.resolved_version);
 
+    const version_copy = try allocator.dupe(u8, artifact.version_key);
+    errdefer allocator.free(version_copy);
+    const resolved_copy = try allocator.dupe(u8, artifact.resolved_version);
     return .{
-        .version = try allocator.dupe(u8, artifact.version_key),
-        .resolved_version = try allocator.dupe(u8, artifact.resolved_version),
+        .version = version_copy,
+        .resolved_version = resolved_copy,
         .install_dir = install_dir,
         .already_installed = false,
         .minisig_verified = minisig_verified,

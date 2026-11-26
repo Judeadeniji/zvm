@@ -162,9 +162,12 @@ pub fn installZls(
         const current_meta = paths.readZlsVersionMeta(io, allocator, zig_version_key) catch null;
         defer if (current_meta) |m| allocator.free(m);
         if (current_meta != null and std.mem.eql(u8, current_meta.?, artifact.version)) {
+            const zig_copy = try allocator.dupe(u8, zig_version_key);
+            errdefer allocator.free(zig_copy);
+            const zls_copy = try allocator.dupe(u8, artifact.version);
             return .{
-                .zig_version = try allocator.dupe(u8, zig_version_key),
-                .zls_version = try allocator.dupe(u8, artifact.version),
+                .zig_version = zig_copy,
+                .zls_version = zls_copy,
                 .install_dir = install_dir,
                 .already_installed = true,
             };
@@ -189,9 +192,12 @@ pub fn installZls(
     });
     try paths.writeZlsVersionMeta(io, allocator, zig_version_key, artifact.version);
 
+    const zig_copy = try allocator.dupe(u8, zig_version_key);
+    errdefer allocator.free(zig_copy);
+    const zls_copy = try allocator.dupe(u8, artifact.version);
     return .{
-        .zig_version = try allocator.dupe(u8, zig_version_key),
-        .zls_version = try allocator.dupe(u8, artifact.version),
+        .zig_version = zig_copy,
+        .zls_version = zls_copy,
         .install_dir = install_dir,
         .already_installed = false,
     };
