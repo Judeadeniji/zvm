@@ -77,7 +77,53 @@ fn exactEnabled(paths: *const Paths, io: Io, options: ResolveOptions, environ_ma
     return paths.isMarkerSet(io, "exact");
 }
 
-/// Parse the `.minimum_zig_version` string from a `build.zig.zon` buffer.
+/// Extracts `.minimum_zig_version` from a `build.zig.zon` buffer and returns an
+/// owned copy (or null when the field is absent).
+///
+/// Uses the real zon parser so comments, inline manifests, and nested tables are
+/// handled exactly like `zig build` does. If the manifest cannot be parsed at
+/// all, falls back to the textual scan below: `std.zon.parse.Diagnostics` can
+/// only be surfaced through `fatal()`, which terminates the process — not an
+/// option while walking ancestor directories that may not even belong to this
+/// project.
+pub fn extractMinimumZigVersion(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
+    if (try parseMinimumZigVersionStructured(allocator, content)) |version| return version;
+
+    const scanned = parseMinimumZigVersionFromZon(content) orelse return null;
+    return try allocator.dupe(u8, scanned);
+}
+
+fn parseMinimumZigVersionStructured(allocator: Allocator, content: []const u8) Allocator.Error!?[]u8 {
+    const ZonPackage = struct {
+        minimum_zig_version: ?[]const u8 = null,
+    };
+
+    // The zon parser requires a sentinel-terminated source.
+    const source = try allocator.allocSentinel(u8, content.len, 0);
+    defer allocator.free(source);
+    @memcpy(source, content);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const package = std.zon.parse.fromSlice(ZonPackage, .{
+        .gpa = allocator,
+        .arena = arena_state.allocator(),
+        .source = source,
+        .diagnostics = &diagnostics,
+        .ignore_unknown_fields = true,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+
+    const raw = package.minimum_zig_version orelse return null;
+    // Parsed strings live in the arena above, so copy before returning.
+    return try allocator.dupe(u8, raw);
+}
+
+/// Textual fallback for manifests `std.zon.parse` rejects.
 ///
 /// Commented-out declarations are ignored, so a stale `// .minimum_zig_version`
 /// line never wins over the real field (or substitutes for a missing one).
@@ -147,8 +193,8 @@ pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []cons
         };
         defer if (zon_bytes) |bytes| allocator.free(bytes);
         if (zon_bytes) |bytes| {
-            if (parseMinimumZigVersionFromZon(bytes)) |min_str| {
-                return try allocator.dupe(u8, min_str);
+            if (try extractMinimumZigVersion(allocator, bytes)) |min_str| {
+                return min_str;
             }
         }
 
@@ -298,7 +344,9 @@ pub fn resolveWithOptions(
         };
         defer if (zon_text) |text| allocator.free(text);
         if (zon_text) |zon_bytes| {
-            if (parseMinimumZigVersionFromZon(zon_bytes)) |min_str| {
+            const min_str_owned = try extractMinimumZigVersion(allocator, zon_bytes);
+            defer if (min_str_owned) |s| allocator.free(s);
+            if (min_str_owned) |min_str| {
                 const min_ver = Version.parse(min_str) catch null;
                 if (min_ver) |mv| {
                     if (exact) {
@@ -351,6 +399,49 @@ test "parseMinimumZigVersionFromZon" {
     const min_v = parseMinimumZigVersionFromZon(zon);
     try std.testing.expect(min_v != null);
     try std.testing.expectEqualStrings("0.17.0", min_v.?);
+}
+
+test "extractMinimumZigVersion parses real manifests and returns owned memory" {
+    const allocator = std.testing.allocator;
+
+    const zon =
+        \\.{
+        \\    .name = .zvm,
+        \\    .version = "0.0.0",
+        \\    .fingerprint = 0xec41f7018f55b9e5,
+        \\    // .minimum_zig_version = "0.10.0",
+        \\    .minimum_zig_version = "0.17.0",
+        \\    .dependencies = .{
+        \\        .zli = .{ .url = "https://example.com/zli.tar.gz", .hash = "h", .lazy = true },
+        \\    },
+        \\    .paths = .{ "build.zig", "src" },
+        \\}
+    ;
+
+    const value = (try extractMinimumZigVersion(allocator, zon)).?;
+    defer allocator.free(value);
+    try std.testing.expectEqualStrings("0.17.0", value);
+
+    try std.testing.expectEqual(
+        @as(?[]u8, null),
+        try extractMinimumZigVersion(allocator, ".{ .name = .zvm, .paths = .{ \"a\" } }"),
+    );
+}
+
+test "extractMinimumZigVersion falls back to the scan for unparseable manifests" {
+    const allocator = std.testing.allocator;
+
+    // Missing the closing brace of `.paths`, so the realistic parser rejects it.
+    const broken =
+        \\.{
+        \\    .minimum_zig_version = "0.16.0",
+        \\    .paths = .{ "build.zig"
+        \\}
+    ;
+
+    const value = (try extractMinimumZigVersion(allocator, broken)).?;
+    defer allocator.free(value);
+    try std.testing.expectEqualStrings("0.16.0", value);
 }
 
 test "parseMinimumZigVersionFromZon ignores commented-out declarations" {
