@@ -91,10 +91,7 @@ pub const Router = struct {
             }
         }
 
-        const flag_path = std.fs.path.join(paths.allocator, &.{ paths.base_dir, "auto-install" }) catch return false;
-        defer paths.allocator.free(flag_path);
-        Io.Dir.cwd().access(io, flag_path, .{}) catch return false;
-        return true;
+        return paths.isMarkerSet(io, "auto-install");
     }
 
     fn printStderr(io: Io, comptime fmt: []const u8, args: anytype) void {

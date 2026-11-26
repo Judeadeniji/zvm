@@ -238,6 +238,31 @@ pub const Paths = struct {
             .data = payload,
         });
     }
+
+    /// Checks whether a persistent boolean marker file (e.g. `auto-install`, `exact`) exists.
+    pub fn isMarkerSet(self: *const Paths, io: Io, name: []const u8) bool {
+        const marker_path = std.fs.path.join(self.allocator, &.{ self.base_dir, name }) catch return false;
+        defer self.allocator.free(marker_path);
+        Io.Dir.cwd().access(io, marker_path, .{}) catch return false;
+        return true;
+    }
+
+    /// Creates or removes a persistent boolean marker file inside `base_dir`.
+    pub fn setMarker(self: *const Paths, io: Io, name: []const u8, enabled: bool) !void {
+        const marker_path = try std.fs.path.join(self.allocator, &.{ self.base_dir, name });
+        defer self.allocator.free(marker_path);
+
+        const cwd = Io.Dir.cwd();
+        if (enabled) {
+            try self.ensureDirs(io);
+            try cwd.writeFile(io, .{ .sub_path = marker_path, .data = "" });
+        } else {
+            cwd.deleteFile(io, marker_path) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            };
+        }
+    }
 };
 
 test "Paths initialization and directory resolution" {

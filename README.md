@@ -13,7 +13,7 @@ A fast, transparent Zig version manager written in Zig.
      - `.zig-version` file (exact version, `master`, or semver constraints like `^0.17.0`, `~0.17.0`, `>=0.16.0 <0.18.0`).
      - `build.zig.zon` project config (honors `minimum_zig_version` by picking the newest compatible installed version).
   3. **Global Default**: User-configured fallback (`default` in ZVM's data directory).
-- **Exact Minimum Mode**: Pass `--exact` to `zvm current`, `zvm which`, `zvm doctor`, or `zvm list`, or set `ZVM_EXACT=1`, to treat `build.zig.zon`'s `minimum_zig_version` as an exact requirement instead of a lower bound.
+- **Exact Minimum Mode**: Pass `--exact` to `zvm install`, `zvm current`, `zvm which`, `zvm doctor`, or `zvm list`, set `ZVM_EXACT=1`, or run `zvm config exact on` to treat `build.zig.zon`'s `minimum_zig_version` as an exact requirement instead of a lower bound.
 - **Cryptographic & Integrity Verification**: Verifies downloaded archives with both SHA-256 checksums and Minisign (`Ed25519` + `BLAKE2b-512`) signatures.
 - **Release & Cache Management**: Fetches `https://ziglang.org/download/index.json`, unpacks `.tar.xz`/`.tar.gz`/`.zip`, tracks `master` dev versions, and supports cache cleanup (`zvm clean`).
 - **Shell Integration & Diagnostics**: Includes `zvm setup` (`zvm shim`), `zvm doctor`, `zvm env`, `zvm completions`, and `ZVM_AUTO_INSTALL`.
@@ -40,6 +40,8 @@ zig version
 
 ```bash
 # Install versions
+zvm install                        # Install the active project's Zig version
+zvm install --exact                # Install exact minimum_zig_version from build.zig.zon
 zvm install 0.17.0                 # Install stable release (SHA-256 + Minisign verified)
 zvm install master                 # Install/update master build (tracks resolved dev version)
 zvm install 0.17.0 --force         # Reinstall even if already installed
@@ -60,7 +62,7 @@ zvm uninstall 0.16.0               # Remove an installed version
 zvm setup [--force]                # Create/verify zig shim (alias: shim)
 zvm doctor                         # Diagnose base dir, shim, and PATH precedence
 zvm clean [--dry-run]              # Remove cached release archives
-zvm config [auto-install [on|off|toggle]] # Inspect or toggle persistent settings
+zvm config [auto-install|exact [on|off|toggle]] # Inspect or toggle persistent settings
 zvm env <bash|zsh|fish|powershell> [--auto-install]
 zvm completions <bash|zsh|fish|powershell>
 ```

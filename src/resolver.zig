@@ -37,15 +37,28 @@ pub const ResolveOptions = struct {
     exact: ?bool = null,
 };
 
-fn exactEnabled(options: ResolveOptions, environ_map: ?*const EnvironMap) bool {
+fn exactEnabled(paths: *const Paths, io: Io, options: ResolveOptions, environ_map: ?*const EnvironMap) bool {
     if (options.exact) |exact| return exact;
 
-    const env = environ_map orelse return false;
-    const raw = env.get("ZVM_EXACT") orelse return false;
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    return std.ascii.eqlIgnoreCase(trimmed, "1") or
-        std.ascii.eqlIgnoreCase(trimmed, "true") or
-        std.ascii.eqlIgnoreCase(trimmed, "yes");
+    if (environ_map) |env| {
+        if (env.get("ZVM_EXACT")) |raw| {
+            const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+            if (std.ascii.eqlIgnoreCase(trimmed, "1") or
+                std.ascii.eqlIgnoreCase(trimmed, "true") or
+                std.ascii.eqlIgnoreCase(trimmed, "yes"))
+            {
+                return true;
+            }
+            if (std.ascii.eqlIgnoreCase(trimmed, "0") or
+                std.ascii.eqlIgnoreCase(trimmed, "false") or
+                std.ascii.eqlIgnoreCase(trimmed, "no"))
+            {
+                return false;
+            }
+        }
+    }
+
+    return paths.isMarkerSet(io, "exact");
 }
 
 /// Parse the `.minimum_zig_version` string from a `build.zig.zon` buffer.
@@ -160,7 +173,7 @@ pub fn resolveWithOptions(
     start_dir: []const u8,
     options: ResolveOptions,
 ) ResolveError!ResolvedVersion {
-    const exact = exactEnabled(options, environ_map);
+    const exact = exactEnabled(paths, io, options, environ_map);
 
     // 1. Environment variable override
     if (environ_map) |env| {
@@ -453,4 +466,32 @@ test "ZVM_EXACT enables exact minimum resolution and --no-exact overrides it" {
     var overridden = try resolveWithOptions(&paths, io, allocator, &env_map, tmp_path, .{ .exact = false });
     defer overridden.deinit(allocator);
     try std.testing.expectEqualStrings("0.17.0", overridden.version);
+}
+
+test "persistent exact marker enables exact mode unless ZVM_EXACT=0 overrides it" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.15.2");
+    try paths.setMarker(io, "exact", true);
+
+    var from_marker = try resolve(&paths, io, allocator, null, tmp_path);
+    defer from_marker.deinit(allocator);
+    try std.testing.expectEqualStrings("0.15.2", from_marker.version);
+
+    var env_map = EnvironMap.init(allocator);
+    defer env_map.deinit();
+    try env_map.put("ZVM_EXACT", "0");
+
+    var env_disabled = try resolve(&paths, io, allocator, &env_map, tmp_path);
+    defer env_disabled.deinit(allocator);
+    try std.testing.expectEqualStrings("0.17.0", env_disabled.version);
 }

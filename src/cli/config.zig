@@ -34,14 +34,39 @@ pub const ConfigAction = enum {
     }
 };
 
+pub const ConfigKey = enum {
+    auto_install,
+    exact,
+
+    pub fn parse(raw: []const u8) ?ConfigKey {
+        if (std.ascii.eqlIgnoreCase(raw, "auto-install")) return .auto_install;
+        if (std.ascii.eqlIgnoreCase(raw, "exact")) return .exact;
+        return null;
+    }
+
+    pub fn markerName(self: ConfigKey) []const u8 {
+        return switch (self) {
+            .auto_install => "auto-install",
+            .exact => "exact",
+        };
+    }
+
+    pub fn envVarName(self: ConfigKey) []const u8 {
+        return switch (self) {
+            .auto_install => "ZVM_AUTO_INSTALL",
+            .exact => "ZVM_EXACT",
+        };
+    }
+};
+
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
         .name = "config",
-        .description = "Inspect or toggle persistent zvm settings (e.g. auto-install)",
+        .description = "Inspect or toggle persistent zvm settings (auto-install, exact)",
     }, handle);
     try cmd.addPositionalArg(.{
         .name = "key",
-        .description = "Setting name (e.g. 'auto-install')",
+        .description = "Setting name: auto-install or exact",
         .required = false,
     });
     try cmd.addPositionalArg(.{
@@ -52,47 +77,17 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
     return cmd;
 }
 
-pub fn autoInstallMarkerPath(paths: *const zvm.Paths, allocator: std.mem.Allocator) ![]u8 {
-    return std.fs.path.join(allocator, &.{ paths.base_dir, "auto-install" });
-}
-
-pub fn isAutoInstallMarkerSet(paths: *const zvm.Paths, io: Io, allocator: std.mem.Allocator) !bool {
-    const marker_path = try autoInstallMarkerPath(paths, allocator);
-    defer allocator.free(marker_path);
-    Io.Dir.cwd().access(io, marker_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return false,
-        else => return err,
-    };
-    return true;
-}
-
-pub fn setAutoInstall(paths: *const zvm.Paths, io: Io, allocator: std.mem.Allocator, enabled: bool) !void {
-    const marker_path = try autoInstallMarkerPath(paths, allocator);
-    defer allocator.free(marker_path);
-
-    const cwd = Io.Dir.cwd();
-    if (enabled) {
-        try paths.ensureDirs(io);
-        try cwd.writeFile(io, .{ .sub_path = marker_path, .data = "" });
-    } else {
-        cwd.deleteFile(io, marker_path) catch |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        };
-    }
-}
-
-fn printAutoInstallStatus(app: *AppContext, ctx: zli.CommandContext) !void {
-    const marker_set = try isAutoInstallMarkerSet(app.paths, ctx.io, ctx.allocator);
+fn printKeyStatus(app: *AppContext, ctx: zli.CommandContext, key: ConfigKey) !void {
+    const marker_set = app.paths.isMarkerSet(ctx.io, key.markerName());
     const marker_state: []const u8 = if (marker_set) "on" else "off";
     const status_kind: report.Status = if (marker_set) .ok else .info;
-    try app.reporter.status(status_kind, "auto-install: {s}\n", .{marker_state});
+    try app.reporter.status(status_kind, "{s}: {s}\n", .{ key.markerName(), marker_state });
 
     if (ctx.environ_map) |env| {
-        if (env.get("ZVM_AUTO_INSTALL")) |raw| {
+        if (env.get(key.envVarName())) |raw| {
             const trimmed = std.mem.trim(u8, raw, " \t\r\n");
             if (trimmed.len > 0) {
-                try app.reporter.muted("  (overridden in environment by ZVM_AUTO_INSTALL={s})\n", .{trimmed});
+                try app.reporter.muted("  (overridden in environment by {s}={s})\n", .{ key.envVarName(), trimmed });
             }
         }
     }
@@ -100,27 +95,28 @@ fn printAutoInstallStatus(app: *AppContext, ctx: zli.CommandContext) !void {
 
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
-    const key = ctx.getArg("key");
-    const value = ctx.getArg("value");
+    const raw_key = ctx.getArg("key");
+    const raw_value = ctx.getArg("value");
 
-    if (key == null) {
-        try printAutoInstallStatus(app, ctx);
+    if (raw_key == null) {
+        try printKeyStatus(app, ctx, .auto_install);
+        try printKeyStatus(app, ctx, .exact);
         return;
     }
 
-    if (!std.ascii.eqlIgnoreCase(key.?, "auto-install")) {
-        try app.reporter.fail("Unknown config key '{s}'.\n", .{key.?});
-        try app.reporter.hint("Supported keys: auto-install\n", .{});
+    const key = ConfigKey.parse(raw_key.?) orelse {
+        try app.reporter.fail("Unknown config key '{s}'.\n", .{raw_key.?});
+        try app.reporter.hint("Supported keys: auto-install, exact\n", .{});
         return error.Reported;
-    }
+    };
 
-    if (value == null) {
-        try printAutoInstallStatus(app, ctx);
+    if (raw_value == null) {
+        try printKeyStatus(app, ctx, key);
         return;
     }
 
-    const action = ConfigAction.parse(value.?) orelse {
-        try app.reporter.fail("Invalid value '{s}' for auto-install.\n", .{value.?});
+    const action = ConfigAction.parse(raw_value.?) orelse {
+        try app.reporter.fail("Invalid value '{s}' for {s}.\n", .{ raw_value.?, key.markerName() });
         try app.reporter.hint("Expected 'on', 'off', or 'toggle'.\n", .{});
         return error.Reported;
     };
@@ -128,14 +124,14 @@ fn handle(ctx: zli.CommandContext) !void {
     const next_enabled = switch (action) {
         .enable => true,
         .disable => false,
-        .toggle => !(try isAutoInstallMarkerSet(app.paths, ctx.io, ctx.allocator)),
+        .toggle => !app.paths.isMarkerSet(ctx.io, key.markerName()),
     };
 
-    try setAutoInstall(app.paths, ctx.io, ctx.allocator, next_enabled);
+    try app.paths.setMarker(ctx.io, key.markerName(), next_enabled);
     if (next_enabled) {
-        try app.reporter.success("Auto-install enabled.\n", .{});
+        try app.reporter.success("{s} enabled.\n", .{key.markerName()});
     } else {
-        try app.reporter.info("Auto-install disabled.\n", .{});
+        try app.reporter.info("{s} disabled.\n", .{key.markerName()});
     }
 }
 
@@ -150,9 +146,13 @@ test "ConfigAction.parse recognizes on, off, and toggle aliases" {
     try std.testing.expectEqual(@as(?ConfigAction, null), ConfigAction.parse("maybe"));
 }
 
-test "setAutoInstall creates and removes marker file" {
+test "ConfigKey.parse and Paths.setMarker handle auto-install and exact" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
+
+    try std.testing.expectEqual(ConfigKey.auto_install, ConfigKey.parse("auto-install").?);
+    try std.testing.expectEqual(ConfigKey.exact, ConfigKey.parse("EXACT").?);
+    try std.testing.expectEqual(@as(?ConfigKey, null), ConfigKey.parse("unknown"));
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -163,13 +163,18 @@ test "setAutoInstall creates and removes marker file" {
     var paths = try zvm.Paths.init(allocator, null, tmp_path);
     defer paths.deinit();
 
-    try std.testing.expect(!(try isAutoInstallMarkerSet(&paths, io, allocator)));
+    try std.testing.expect(!paths.isMarkerSet(io, "auto-install"));
+    try std.testing.expect(!paths.isMarkerSet(io, "exact"));
 
-    try setAutoInstall(&paths, io, allocator, true);
-    try std.testing.expect(try isAutoInstallMarkerSet(&paths, io, allocator));
+    try paths.setMarker(io, "auto-install", true);
+    try paths.setMarker(io, "exact", true);
+    try std.testing.expect(paths.isMarkerSet(io, "auto-install"));
+    try std.testing.expect(paths.isMarkerSet(io, "exact"));
     try std.testing.expect(zvm.Router.isAutoInstallEnabled(&paths, io, null));
 
-    try setAutoInstall(&paths, io, allocator, false);
-    try std.testing.expect(!(try isAutoInstallMarkerSet(&paths, io, allocator)));
+    try paths.setMarker(io, "auto-install", false);
+    try paths.setMarker(io, "exact", false);
+    try std.testing.expect(!paths.isMarkerSet(io, "auto-install"));
+    try std.testing.expect(!paths.isMarkerSet(io, "exact"));
     try std.testing.expect(!zvm.Router.isAutoInstallEnabled(&paths, io, null));
 }

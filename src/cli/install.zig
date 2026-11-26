@@ -4,6 +4,7 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const flags = @import("flags.zig");
 
 const SpinnerProgress = struct {
     spinner: *zli.Spinner,
@@ -39,8 +40,8 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
     }, handle);
     try cmd.addPositionalArg(.{
         .name = "version",
-        .description = "Version to install (e.g. '0.17.0', 'master')",
-        .required = true,
+        .description = "Version to install (defaults to current project version if omitted)",
+        .required = false,
     });
     try cmd.addFlag(.{
         .name = "force",
@@ -61,12 +62,39 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .type = .String,
         .default_value = .{ .String = "" },
     });
+    try cmd.addFlag(flags.exact);
     return cmd;
+}
+
+fn resolveProjectInstallVersion(app: *AppContext, ctx: zli.CommandContext) !?[]u8 {
+    if (zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+        .exact = flags.exactOverride(ctx),
+    })) |resolved| {
+        var r = resolved;
+        defer r.deinit(ctx.allocator);
+        return try ctx.allocator.dupe(u8, r.version);
+    } else |err| switch (err) {
+        zvm.errors.ResolveError.NoCompatibleVersionInstalled => {
+            return try zvm.resolver.findProjectMinimumVersion(ctx.io, ctx.allocator, app.cwd);
+        },
+        zvm.errors.ResolveError.NoVersionConfigured => return null,
+        else => return err,
+    }
 }
 
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
-    const raw_version = ctx.getArg("version") orelse return zvm.errors.CliError.MissingVersion;
+    var resolved_owned: ?[]u8 = null;
+    defer if (resolved_owned) |v| ctx.allocator.free(v);
+
+    const raw_version = ctx.getArg("version") orelse blk: {
+        resolved_owned = (try resolveProjectInstallVersion(app, ctx)) orelse {
+            try app.reporter.fail("No version specified and no project version found.\n", .{});
+            try app.reporter.hint("Pass a version (e.g. 'zvm install 0.17.0') or run inside a project with .zig-version or build.zig.zon.\n", .{});
+            return error.Reported;
+        };
+        break :blk resolved_owned.?;
+    };
     const force = ctx.flag("force", bool);
     const no_minisig = ctx.flag("no-minisig", bool);
     const minisig_key_flag = ctx.flag("minisig-key", []const u8);

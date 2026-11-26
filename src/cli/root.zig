@@ -181,7 +181,7 @@ test "buildRootCommand registers expected subcommands" {
     for (expected) |name| {
         try std.testing.expect(root.commands_by_name.contains(name));
     }
-    for ([_][]const u8{ "current", "which", "doctor", "list" }) |name| {
+    for ([_][]const u8{ "current", "which", "doctor", "list", "install" }) |name| {
         const cmd = root.findCommand(name).?;
         try std.testing.expect(cmd.flags_by_name.contains("exact"));
     }

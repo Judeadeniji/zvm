@@ -70,7 +70,7 @@ const bash_script =
     \\        return 0
     \\    fi
     \\    case "${COMP_WORDS[1]}" in
-    \\        install) COMPREPLY=( $(compgen -W "master --force --minisig-key --no-minisig --help" -- "${cur}") ) ;;
+    \\        install) COMPREPLY=( $(compgen -W "master --force --exact --minisig-key --no-minisig --help" -- "${cur}") ) ;;
     \\        use|uninstall)
     \\            local installed=""
     \\            if command -v zvm >/dev/null 2>&1; then
@@ -88,7 +88,7 @@ const bash_script =
     \\        current|doctor|list) COMPREPLY=( $(compgen -W "--exact --help" -- "${cur}") ) ;;
     \\        config)
     \\            if [[ ${COMP_CWORD} -eq 2 ]]; then
-    \\                COMPREPLY=( $(compgen -W "auto-install --help" -- "${cur}") )
+    \\                COMPREPLY=( $(compgen -W "auto-install exact --help" -- "${cur}") )
     \\            else
     \\                COMPREPLY=( $(compgen -W "on off toggle --help" -- "${cur}") )
     \\            fi
@@ -136,8 +136,8 @@ const zsh_script =
     \\            case "$line[1]" in
     \\                completions) _values 'shell' bash zsh fish powershell ;;
     \\                env) _arguments '--auto-install[Enable ZVM_AUTO_INSTALL=1]' '1:shell:(bash zsh fish powershell)' ;;
-    \\                config) _arguments '1:key:(auto-install)' '2:value:(on off toggle)' ;;
-    \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
+    \\                config) _arguments '1:key:(auto-install exact)' '2:value:(on off toggle)' ;;
+    \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--exact[Install exact minimum_zig_version]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
     \\                current|doctor|list|which) _arguments '--exact[Treat minimum_zig_version as exact]' ;;
     \\                clean) _arguments '(-n --dry-run)'{-n,--dry-run}'[Dry run]' ;;
     \\                list-remote) _arguments '(-a --all)'{-a,--all}'[Show all releases]' ;;
@@ -169,9 +169,10 @@ const fish_script =
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a completions -d "Generate shell completions"
     \\complete -c zvm -n "__fish_seen_subcommand_from completions env" -a "bash zsh fish powershell"
     \\complete -c zvm -n "__fish_seen_subcommand_from env" -l auto-install -d "Enable ZVM_AUTO_INSTALL=1"
-    \\complete -c zvm -n "__fish_seen_subcommand_from config" -a "auto-install on off toggle"
+    \\complete -c zvm -n "__fish_seen_subcommand_from config" -a "auto-install exact on off toggle"
     \\complete -c zvm -n "__fish_seen_subcommand_from current doctor list which" -l exact -d "Treat minimum_zig_version as exact"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -s f -l force -d "Force reinstall"
+    \\complete -c zvm -n "__fish_seen_subcommand_from install" -l exact -d "Install exact minimum_zig_version"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l minisig-key -r -d "Override Minisign public key"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l no-minisig -d "Skip minisig verification"
     \\complete -c zvm -n "__fish_seen_subcommand_from clean" -s n -l dry-run -d "Preview cleanup"
@@ -198,7 +199,7 @@ const powershell_script =
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    } elseif ($tokens[1].Extent.Text -eq 'config') {
-    \\        $opts = if ($tokens.Count -le 3) { @('auto-install') } else { @('on', 'off', 'toggle') }
+    \\        $opts = if ($tokens.Count -le 3) { @('auto-install', 'exact') } else { @('on', 'off', 'toggle') }
     \\        $opts | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
@@ -207,7 +208,7 @@ const powershell_script =
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    } elseif ($tokens[1].Extent.Text -eq 'install') {
-    \\        @('master', '--force', '--minisig-key', '--no-minisig') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    \\        @('master', '--force', '--exact', '--minisig-key', '--no-minisig') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
     \\            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     \\        }
     \\    }
