@@ -28,7 +28,12 @@ pub const ConstraintParseError = error{
 } || VersionParseError;
 
 pub const ResolveError = error{
+    /// A `build.zig.zon` `minimum_zig_version` has no installed version that satisfies it.
     NoCompatibleVersionInstalled,
+    /// A `.zig-version` semver constraint has no installed version that satisfies it.
+    UnmatchedZigVersionConstraint,
+    /// A `.zig-version` file does not contain a parseable version or constraint.
+    InvalidZigVersionConstraint,
     NoVersionConfigured,
 } || PathError || Allocator.Error || Io.Dir.OpenError || Io.Dir.ReadFileError || Io.Dir.AccessError;
 

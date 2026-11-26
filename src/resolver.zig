@@ -204,29 +204,26 @@ pub fn resolveWithOptions(
         if (cwd.readFile(io, zig_version_path, &buf)) |bytes| {
             const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
             if (trimmed.len > 0) {
-                const constraint = Constraint.parse(trimmed) catch null;
-                if (constraint) |c| {
-                    if (c.exactPin()) |exact_pin| {
-                        return .{
-                            .version = try exact_pin.toString(allocator),
-                            .source = .zig_version_file,
-                            .source_path = try allocator.dupe(u8, zig_version_path),
-                        };
-                    }
-                    if (try findHighestMatchingInstalled(paths, io, allocator, c)) |matched| {
-                        return .{
-                            .version = matched,
-                            .source = .zig_version_file,
-                            .source_path = try allocator.dupe(u8, zig_version_path),
-                        };
-                    }
-                    return ResolveError.NoCompatibleVersionInstalled;
+                // A `.zig-version` file is authoritative: an unparseable file must be
+                // reported, never treated as a version name or silently skipped.
+                const constraint = Constraint.parse(trimmed) catch
+                    return ResolveError.InvalidZigVersionConstraint;
+
+                if (constraint.exactPin()) |exact_pin| {
+                    return .{
+                        .version = try exact_pin.toString(allocator),
+                        .source = .zig_version_file,
+                        .source_path = try allocator.dupe(u8, zig_version_path),
+                    };
                 }
-                return .{
-                    .version = try allocator.dupe(u8, trimmed),
-                    .source = .zig_version_file,
-                    .source_path = try allocator.dupe(u8, zig_version_path),
-                };
+                if (try findHighestMatchingInstalled(paths, io, allocator, constraint)) |matched| {
+                    return .{
+                        .version = matched,
+                        .source = .zig_version_file,
+                        .source_path = try allocator.dupe(u8, zig_version_path),
+                    };
+                }
+                return ResolveError.UnmatchedZigVersionConstraint;
             }
         } else |_| {}
 
@@ -494,4 +491,53 @@ test "persistent exact marker enables exact mode unless ZVM_EXACT=0 overrides it
     var env_disabled = try resolve(&paths, io, allocator, &env_map, tmp_path);
     defer env_disabled.deinit(allocator);
     try std.testing.expectEqualStrings("0.17.0", env_disabled.version);
+}
+
+test "invalid .zig-version is reported instead of treated as a version" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const zv_file = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(zv_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zv_file, .data = "banana\n" });
+
+    try std.testing.expectError(
+        ResolveError.InvalidZigVersionConstraint,
+        resolve(&paths, io, allocator, null, tmp_path),
+    );
+}
+
+test ".zig-version constraint without a matching install is distinguishable from a zon miss" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.15.2");
+
+    // The pin wins over the zon minimum and cannot be auto-installed from the zon.
+    const zv_file = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(zv_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zv_file, .data = ">=9.0.0\n" });
+
+    try std.testing.expectError(
+        ResolveError.UnmatchedZigVersionConstraint,
+        resolve(&paths, io, allocator, null, tmp_path),
+    );
 }

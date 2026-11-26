@@ -147,6 +147,15 @@ fn resolveTargetZigVersion(app: *AppContext, ctx: zli.CommandContext, raw_arg: ?
             try app.reporter.fail("No installed Zig version satisfies the project's constraint.\n", .{});
             return error.Reported;
         },
+        zvm.errors.ResolveError.UnmatchedZigVersionConstraint => {
+            try app.reporter.fail("No installed Zig version satisfies the constraint in .zig-version.\n", .{});
+            try app.reporter.hint("Pass a Zig version explicitly (e.g. 'zvm zls install 0.17.0').\n", .{});
+            return error.Reported;
+        },
+        zvm.errors.ResolveError.InvalidZigVersionConstraint => {
+            try app.reporter.fail("The .zig-version file does not contain a valid Zig version or constraint.\n", .{});
+            return error.Reported;
+        },
         else => return err,
     };
     defer resolved.deinit(ctx.allocator);

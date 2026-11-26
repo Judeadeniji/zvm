@@ -206,6 +206,14 @@ pub const Reporter = struct {
                 try self.fail("No installed Zig version satisfies the project's minimum_zig_version.\n", .{});
                 try self.hint("Run 'zvm install <version>' to install a compatible release.\n", .{});
             },
+            zvm.errors.ResolveError.UnmatchedZigVersionConstraint => {
+                try self.fail("No installed Zig version satisfies the constraint in .zig-version.\n", .{});
+                try self.hint("Run 'zvm install <version>' to install a matching release, or 'zvm pin <version>' to change the pin.\n", .{});
+            },
+            zvm.errors.ResolveError.InvalidZigVersionConstraint => {
+                try self.fail("The .zig-version file does not contain a valid Zig version or constraint.\n", .{});
+                try self.hint("Use a version such as '0.17.0' or 'master', or a range like '^0.17.0'.\n", .{});
+            },
             zvm.errors.DownloadError.VersionNotFound => {
                 try self.fail("That Zig version was not found in the release index.\n", .{});
                 try self.hint("Run 'zvm list-remote' to see available versions.\n", .{});

@@ -144,6 +144,12 @@ pub const Router = struct {
                     ResolveError.NoCompatibleVersionInstalled => {
                         printStderr(self.io, "error: No installed Zig version satisfies project minimum requirement in build.zig.zon.\nhint: Run 'zvm list-remote' to check available releases, then 'zvm install <version>'.\n", .{});
                     },
+                    ResolveError.UnmatchedZigVersionConstraint => {
+                        printStderr(self.io, "error: No installed Zig version satisfies the constraint in .zig-version.\nhint: Run 'zvm install <version>' to install a matching release, or 'zvm pin <version>' to change the pin.\n", .{});
+                    },
+                    ResolveError.InvalidZigVersionConstraint => {
+                        printStderr(self.io, "error: The .zig-version file does not contain a valid Zig version or constraint.\nhint: Use a version such as '0.17.0' or 'master', or a range like '^0.17.0'.\n", .{});
+                    },
                     ResolveError.NoVersionConfigured => {
                         printStderr(self.io, "error: No Zig version configured for current project or global default.\nhint: Run 'zvm use <version>' to set a global default, or 'zvm pin <version>' for this project.\n", .{});
                     },

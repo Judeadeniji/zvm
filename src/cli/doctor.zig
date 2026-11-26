@@ -139,7 +139,9 @@ fn handle(ctx: zli.CommandContext) !void {
     }) catch |err| {
         const reason: []const u8 = switch (err) {
             zvm.errors.ResolveError.NoVersionConfigured => "no version configured",
-            zvm.errors.ResolveError.NoCompatibleVersionInstalled => "no installed version satisfies the project constraint",
+            zvm.errors.ResolveError.NoCompatibleVersionInstalled => "no installed version satisfies minimum_zig_version in build.zig.zon",
+            zvm.errors.ResolveError.UnmatchedZigVersionConstraint => "no installed version satisfies the constraint in .zig-version",
+            zvm.errors.ResolveError.InvalidZigVersionConstraint => ".zig-version is not a valid version or constraint",
             else => "could not read the version configuration",
         };
         try app.reporter.status(.info, "Active version in '{s}': unresolved ({s})\n", .{ app.cwd, reason });

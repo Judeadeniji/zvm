@@ -82,7 +82,19 @@ fn resolveProjectInstallVersion(app: *AppContext, ctx: zli.CommandContext) !?[]u
         return try ctx.allocator.dupe(u8, r.version);
     } else |err| switch (err) {
         zvm.errors.ResolveError.NoCompatibleVersionInstalled => {
+            // Only a build.zig.zon minimum is a deterministic install target. A pinned
+            // .zig-version range must be satisfied explicitly, never replaced by the zon.
             return try zvm.resolver.findProjectMinimumVersion(ctx.io, ctx.allocator, app.cwd);
+        },
+        zvm.errors.ResolveError.UnmatchedZigVersionConstraint => {
+            try app.reporter.fail("No installed Zig version satisfies the constraint in .zig-version.\n", .{});
+            try app.reporter.hint("Pass a version explicitly (e.g. 'zvm install 0.17.0') or change the pin with 'zvm pin <version>'.\n", .{});
+            return error.Reported;
+        },
+        zvm.errors.ResolveError.InvalidZigVersionConstraint => {
+            try app.reporter.fail("The .zig-version file does not contain a valid Zig version or constraint.\n", .{});
+            try app.reporter.hint("Use a version such as '0.17.0' or 'master', or a range like '^0.17.0'.\n", .{});
+            return error.Reported;
         },
         zvm.errors.ResolveError.NoVersionConfigured => return null,
         else => return err,

@@ -39,6 +39,16 @@ fn handle(ctx: zli.CommandContext) !void {
             try app.reporter.hint("Run 'zvm install <version>' to install a compatible release.\n", .{});
             return error.Reported;
         },
+        zvm.errors.ResolveError.UnmatchedZigVersionConstraint => {
+            try app.reporter.fail("No installed Zig version satisfies the constraint in .zig-version.\n", .{});
+            try app.reporter.hint("Run 'zvm install <version>' to install a matching release, or 'zvm pin <version>' to change the pin.\n", .{});
+            return error.Reported;
+        },
+        zvm.errors.ResolveError.InvalidZigVersionConstraint => {
+            try app.reporter.fail("The .zig-version file does not contain a valid Zig version or constraint.\n", .{});
+            try app.reporter.hint("Use a version such as '0.17.0' or 'master', or a range like '^0.17.0'.\n", .{});
+            return error.Reported;
+        },
         else => return err,
     };
     defer resolved.deinit(ctx.allocator);
