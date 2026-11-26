@@ -90,6 +90,13 @@ pub fn parseMinimumZigVersionFromZon(content: []const u8) ?[]const u8 {
     return val_start[0..end_quote];
 }
 
+/// Upper bound for reading `build.zig.zon`; manifests with many dependencies can
+/// easily exceed a stack buffer, and a truncated manifest silently hides the pin.
+const max_zon_bytes = 1024 * 1024;
+
+/// Upper bound for `.zig-version`; anything larger is not a version string.
+const max_zig_version_bytes = 64 * 1024;
+
 /// Walks parent directories from `start_dir` to find `.minimum_zig_version` in `build.zig.zon`.
 pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []const u8) !?[]u8 {
     var current_dir = try allocator.dupe(u8, start_dir);
@@ -100,12 +107,16 @@ pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []cons
         const zon_path = try std.fs.path.join(allocator, &.{ current_dir, "build.zig.zon" });
         defer allocator.free(zon_path);
 
-        var zon_buf: [8192]u8 = undefined;
-        if (cwd.readFile(io, zon_path, &zon_buf)) |zon_bytes| {
-            if (parseMinimumZigVersionFromZon(zon_bytes)) |min_str| {
+        const zon_bytes: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        defer if (zon_bytes) |bytes| allocator.free(bytes);
+        if (zon_bytes) |bytes| {
+            if (parseMinimumZigVersionFromZon(bytes)) |min_str| {
                 return try allocator.dupe(u8, min_str);
             }
-        } else |_| {}
+        }
 
         const parent = std.fs.path.dirname(current_dir);
         if (parent == null or std.mem.eql(u8, parent.?, current_dir)) break;
@@ -215,9 +226,13 @@ pub fn resolveWithOptions(
         const zig_version_path = try std.fs.path.join(allocator, &.{ current_dir, ".zig-version" });
         defer allocator.free(zig_version_path);
 
-        var buf: [256]u8 = undefined;
-        if (cwd.readFile(io, zig_version_path, &buf)) |bytes| {
-            const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+        const zig_version_text: ?[]u8 = cwd.readFileAlloc(io, zig_version_path, allocator, .limited(max_zig_version_bytes)) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        defer if (zig_version_text) |text| allocator.free(text);
+        if (zig_version_text) |text| {
+            const trimmed = std.mem.trim(u8, text, " \t\r\n");
             if (trimmed.len > 0) {
                 // A `.zig-version` file is authoritative: an unparseable file must be
                 // reported, never treated as a version name or silently skipped.
@@ -237,14 +252,18 @@ pub fn resolveWithOptions(
                 }
                 return ResolveError.UnmatchedZigVersionConstraint;
             }
-        } else |_| {}
+        }
 
         // 2b. Check for build.zig.zon
         const zon_path = try std.fs.path.join(allocator, &.{ current_dir, "build.zig.zon" });
         defer allocator.free(zon_path);
 
-        var zon_buf: [8192]u8 = undefined;
-        if (cwd.readFile(io, zon_path, &zon_buf)) |zon_bytes| {
+        const zon_text: ?[]u8 = cwd.readFileAlloc(io, zon_path, allocator, .limited(max_zon_bytes)) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        defer if (zon_text) |text| allocator.free(text);
+        if (zon_text) |zon_bytes| {
             if (parseMinimumZigVersionFromZon(zon_bytes)) |min_str| {
                 const min_ver = Version.parse(min_str) catch null;
                 if (min_ver) |mv| {
@@ -265,7 +284,7 @@ pub fn resolveWithOptions(
                     }
                 }
             }
-        } else |_| {}
+        }
 
         // Walk to parent directory
         const parent = std.fs.path.dirname(current_dir);
@@ -496,6 +515,52 @@ test "persistent exact marker enables exact mode unless ZVM_EXACT=0 overrides it
     var env_disabled = try resolve(&paths, io, allocator, &env_map, tmp_path);
     defer env_disabled.deinit(allocator);
     try std.testing.expectEqualStrings("0.17.0", env_disabled.version);
+}
+
+test "minimum_zig_version is honored in zon manifests larger than a small buffer" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const v_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(v_dir);
+    try Io.Dir.cwd().createDirPath(io, v_dir);
+    const bin_path = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(bin_path);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+
+    // An empty .zig-version keeps this repository's own pin out of the walk-up.
+    const zv_file = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(zv_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zv_file, .data = "\n" });
+
+    const padding = try allocator.alloc(u8, 16 * 1024);
+    defer allocator.free(padding);
+    @memset(padding, 'x');
+
+    const zon = try allocator.print(
+        ".{{\n    // {s}\n    .name = .big,\n    .minimum_zig_version = \"0.17.0\",\n}}\n",
+        .{padding},
+    );
+    defer allocator.free(zon);
+
+    const zon_file = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = zon_file, .data = zon });
+
+    var resolved = try resolve(&paths, io, allocator, null, tmp_path);
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.17.0", resolved.version);
+    try std.testing.expectEqual(ResolutionSource.build_zig_zon, resolved.source);
 }
 
 test "invalid .zig-version is reported instead of treated as a version" {

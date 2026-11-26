@@ -100,6 +100,8 @@ pub fn render(writer: *std.Io.Writer, shell: Shell, bin_dir: []const u8, auto_in
             if (auto_install) try writer.writeAll("export ZVM_AUTO_INSTALL=1\n");
             try writer.writeAll(
                 \\_zvm_hook() {
+                \\    [[ "$PWD" == "${_ZVM_LAST_PWD:-}" ]] && return 0
+                \\    _ZVM_LAST_PWD="$PWD"
                 \\    if [[ -f ".zig-version" || -f "build.zig.zon" ]]; then
                 \\        zvm current >/dev/null 2>&1 || true
                 \\    fi

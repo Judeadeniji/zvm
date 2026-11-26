@@ -35,7 +35,7 @@ pub const ResolveError = error{
     /// A `.zig-version` file does not contain a parseable version or constraint.
     InvalidZigVersionConstraint,
     NoVersionConfigured,
-} || PathError || Allocator.Error || Io.Dir.OpenError || Io.Dir.ReadFileError || Io.Dir.AccessError;
+} || PathError || Allocator.Error || Io.Dir.OpenError || Io.Dir.ReadFileError || Io.Dir.ReadFileAllocError || Io.Dir.AccessError;
 
 pub const ShimError = error{
     ShimAlreadyExists,

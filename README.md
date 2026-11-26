@@ -10,7 +10,7 @@ Install, switch, and manage multiple [Zig](https://ziglang.org) compiler version
 
 - **Automatic project switching** — Reads `.zig-version` and `build.zig.zon` as you move between projects, so `zig` always runs the version your project expects.
 - **Fast & self-contained** — Single native binary with no runtime dependencies and near-zero overhead when invoking `zig`.
-- **Verified downloads** — Every Zig release is checked with both SHA-256 checksums and Minisign signatures before extraction.
+- **Verified downloads** — Every Zig release is checked against its SHA-256 checksum and, when upstream publishes one, its Minisign signature before extraction.
 - **Built-in `master` tracking** — Install `master` and keep it up to date as new dev builds land.
 - **Cross-platform** — Works on Linux, macOS, and Windows with completions for Bash, Zsh, Fish, and PowerShell.
 

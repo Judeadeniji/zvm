@@ -25,6 +25,24 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
     return cmd;
 }
 
+/// Recursively sums the file sizes below `dir/name` (0 when it cannot be read).
+fn dirSizeBytes(io: Io, dir: Io.Dir, name: []const u8) u64 {
+    var sub = dir.openDir(io, name, .{ .iterate = true }) catch return 0;
+    defer sub.close(io);
+
+    var total: u64 = 0;
+    var it = sub.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind == .directory) {
+            total += dirSizeBytes(io, sub, entry.name);
+        } else {
+            const st = sub.statFile(io, entry.name, .{}) catch continue;
+            total += st.size;
+        }
+    }
+    return total;
+}
+
 pub fn cleanCacheDir(io: Io, cache_dir_path: []const u8, dry_run: bool) !CleanSummary {
     const cwd = Io.Dir.cwd();
     var dir = cwd.openDir(io, cache_dir_path, .{ .iterate = true }) catch |err| switch (err) {
@@ -37,6 +55,7 @@ pub fn cleanCacheDir(io: Io, cache_dir_path: []const u8, dry_run: bool) !CleanSu
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind == .directory) {
+            summary.bytes_freed += dirSizeBytes(io, dir, entry.name);
             if (!dry_run) try dir.deleteTree(io, entry.name);
             summary.files_removed += 1;
             continue;
@@ -90,13 +109,21 @@ test "cleanCacheDir dry-run and delete" {
     defer allocator.free(file_a);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = file_a, .data = "0123456789" });
 
+    // A nested directory contributes its contents, not just an item count.
+    const nested_dir = try std.fs.path.join(allocator, &.{ cache_path, "stage" });
+    defer allocator.free(nested_dir);
+    try Io.Dir.cwd().createDirPath(io, nested_dir);
+    const nested_file = try std.fs.path.join(allocator, &.{ nested_dir, "b.bin" });
+    defer allocator.free(nested_file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = nested_file, .data = "01234" });
+
     const dry = try cleanCacheDir(io, cache_path, true);
-    try std.testing.expectEqual(@as(usize, 1), dry.files_removed);
-    try std.testing.expectEqual(@as(u64, 10), dry.bytes_freed);
+    try std.testing.expectEqual(@as(usize, 2), dry.files_removed);
+    try std.testing.expectEqual(@as(u64, 15), dry.bytes_freed);
     try Io.Dir.cwd().access(io, file_a, .{});
 
     const real = try cleanCacheDir(io, cache_path, false);
-    try std.testing.expectEqual(@as(usize, 1), real.files_removed);
-    try std.testing.expectEqual(@as(u64, 10), real.bytes_freed);
+    try std.testing.expectEqual(@as(usize, 2), real.files_removed);
+    try std.testing.expectEqual(@as(u64, 15), real.bytes_freed);
     try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, file_a, .{}));
 }
