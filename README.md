@@ -171,6 +171,7 @@ Editor setup guides: [VS Code](docs/editors/vscode.md) · [Neovim](docs/editors/
 | `zvm clean [--dry-run]` | Delete cached download archives |
 | `zvm env <shell> [--auto-install]` | Print shell `PATH` and directory-hook snippet (or `--editor <name>` for ZLS config) |
 | `zvm zls <subcommand>` | Manage ZLS paired to Zig (`install`, `update`, `list`, `use`, `which`, `uninstall`) |
+| `zvm upgrade [tag]` | Upgrade `zvm` itself (`--check`, `--nightly`, `--force`; alias: `self-update`) |
 | `zvm completions <shell>` | Print tab-completion script (`bash`, `zsh`, `fish`, `powershell`) |
 
 ---

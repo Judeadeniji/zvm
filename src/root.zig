@@ -23,6 +23,7 @@ pub const Router = router.Router;
 
 pub const downloader = @import("downloader.zig");
 pub const zls_downloader = @import("zls_downloader.zig");
+pub const self_updater = @import("self_updater.zig");
 pub const shim = @import("shim.zig");
 pub const minisig = @import("minisig.zig");
 
@@ -34,6 +35,7 @@ test {
     _ = router;
     _ = downloader;
     _ = zls_downloader;
+    _ = self_updater;
     _ = shim;
     _ = minisig;
 }

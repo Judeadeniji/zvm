@@ -64,7 +64,7 @@ const bash_script =
     \\    local cur prev
     \\    cur="${COMP_WORDS[COMP_CWORD]}"
     \\    prev="${COMP_WORDS[COMP_CWORD-1]}"
-    \\    local cmds="install use pin list list-remote current which uninstall setup shim doctor clean config env completions zls"
+    \\    local cmds="install use pin list list-remote current which uninstall setup shim doctor clean config env completions upgrade self-update zls"
     \\    if [[ ${COMP_CWORD} -eq 1 ]]; then
     \\        COMPREPLY=( $(compgen -W "${cmds} --help --version" -- "${cur}") )
     \\        return 0
@@ -107,6 +107,7 @@ const bash_script =
     \\                COMPREPLY=( $(compgen -W "--force --exact --help" -- "${cur}") )
     \\            fi
     \\            ;;
+    \\        upgrade|self-update) COMPREPLY=( $(compgen -W "--check --nightly --force --help" -- "${cur}") ) ;;
     \\        env) COMPREPLY=( $(compgen -W "bash zsh fish powershell --auto-install --editor --help" -- "${cur}") ) ;;
     \\        completions) COMPREPLY=( $(compgen -W "bash zsh fish powershell --help" -- "${cur}") ) ;;
     \\        list-remote) COMPREPLY=( $(compgen -W "--all --help" -- "${cur}") ) ;;
@@ -139,6 +140,8 @@ const zsh_script =
     \\        'config:Inspect or toggle persistent zvm settings'
     \\        'env:Print shell PATH and hook setup script'
     \\        'completions:Generate shell completion script'
+    \\        'upgrade:Upgrade zvm itself to the latest release'
+    \\        'self-update:Alias for upgrade'
     \\        'zls:Manage ZLS versions paired to Zig'
     \\    )
     \\    _arguments -C \
@@ -152,6 +155,7 @@ const zsh_script =
     \\                completions) _values 'shell' bash zsh fish powershell ;;
     \\                env) _arguments '--auto-install[Enable ZVM_AUTO_INSTALL=1]' '--editor[Print editor ZLS config]:editor:(vscode nvim helix emacs zed)' '1:shell:(bash zsh fish powershell)' ;;
     \\                config) _arguments '1:key:(auto-install exact)' '2:value:(on off toggle)' ;;
+    \\                upgrade|self-update) _arguments '(-c --check)'{-c,--check}'[Check for updates only]' '--nightly[Upgrade to nightly build]' '(-f --force)'{-f,--force}'[Force reinstall]' ;;
     \\                zls) _values 'zls subcommand' install update list use which uninstall ;;
     \\                install) _arguments '(-f --force)'{-f,--force}'[Force reinstall]' '--exact[Install exact minimum_zig_version]' '--with-zls[Also install compatible ZLS]' '--minisig-key[Override Minisign public key]:key:' '--no-minisig[Skip minisig check]' '1:version:(master)' ;;
     \\                use) _arguments '--with-zls[Also install/activate paired ZLS]' ;;
@@ -169,7 +173,7 @@ const zsh_script =
 
 const fish_script =
     \\complete -c zvm -f
-    \\set -l zvm_cmds install use pin list list-remote current which uninstall setup shim doctor clean config env completions zls
+    \\set -l zvm_cmds install use pin list list-remote current which uninstall setup shim doctor clean config env completions upgrade self-update zls
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a install -d "Install a Zig version"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a use -d "Switch global default Zig version"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a pin -d "Pin version in .zig-version"
@@ -184,6 +188,7 @@ const fish_script =
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a config -d "Inspect or toggle persistent settings"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a env -d "Print shell PATH and hook script"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a completions -d "Generate shell completions"
+    \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a upgrade -d "Upgrade zvm itself"
     \\complete -c zvm -n "not __fish_seen_subcommand_from $zvm_cmds" -a zls -d "Manage ZLS versions"
     \\complete -c zvm -n "__fish_seen_subcommand_from completions env" -a "bash zsh fish powershell"
     \\complete -c zvm -n "__fish_seen_subcommand_from env" -l auto-install -d "Enable ZVM_AUTO_INSTALL=1"
@@ -193,6 +198,9 @@ const fish_script =
     \\complete -c zvm -n "__fish_seen_subcommand_from current doctor list which" -l exact -d "Treat minimum_zig_version as exact"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -s f -l force -d "Force reinstall"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l exact -d "Install exact minimum_zig_version"
+    \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -s c -l check -d "Check for updates only"
+    \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -l nightly -d "Upgrade to nightly build"
+    \\complete -c zvm -n "__fish_seen_subcommand_from upgrade self-update" -s f -l force -d "Force reinstall"
     \\complete -c zvm -n "__fish_seen_subcommand_from install use" -l with-zls -d "Also install compatible ZLS"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l minisig-key -r -d "Override Minisign public key"
     \\complete -c zvm -n "__fish_seen_subcommand_from install" -l no-minisig -d "Skip minisig verification"
@@ -205,7 +213,7 @@ const fish_script =
 const powershell_script =
     \\Register-ArgumentCompleter -Native -CommandName zvm -ScriptBlock {
     \\    param($wordToComplete, $commandAst, $cursorPosition)
-    \\    $cmds = @('install', 'use', 'pin', 'list', 'list-remote', 'current', 'which', 'uninstall', 'setup', 'shim', 'doctor', 'clean', 'config', 'env', 'completions', 'zls')
+    \\    $cmds = @('install', 'use', 'pin', 'list', 'list-remote', 'current', 'which', 'uninstall', 'setup', 'shim', 'doctor', 'clean', 'config', 'env', 'completions', 'upgrade', 'self-update', 'zls')
     \\    $tokens = $commandAst.CommandElements
     \\    if ($tokens.Count -le 2) {
     \\        $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {

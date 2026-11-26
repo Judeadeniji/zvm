@@ -89,5 +89,13 @@ pub const ZlsError = error{
     ZlsNotInstalled,
 };
 
+pub const UpgradeError = error{
+    ReleaseNotFound,
+    AssetNotFound,
+    InvalidReleaseMetadata,
+    ChecksumNotFound,
+    ExecutableReplaceFailed,
+};
+
 /// Combined domain error set across all `zvm` subsystems.
-pub const ZvmError = PathError || ConstraintParseError || ResolveError || ShimError || DownloadError || CliError || ZlsError;
+pub const ZvmError = PathError || ConstraintParseError || ResolveError || ShimError || DownloadError || CliError || ZlsError || UpgradeError;

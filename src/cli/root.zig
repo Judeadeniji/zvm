@@ -23,6 +23,7 @@ const clean_cmd = @import("clean.zig");
 const config_cmd = @import("config.zig");
 const env_cmd = @import("env.zig");
 const completions_cmd = @import("completions.zig");
+const upgrade_cmd = @import("upgrade.zig");
 const zls_cmd = @import("zls.zig");
 
 fn showHelp(ctx: zli.CommandContext) !void {
@@ -53,6 +54,7 @@ pub fn buildRootCommand(init_options: zli.InitOptions) zli.CommandSetupErrors!*z
         config_cmd.command,
         env_cmd.command,
         completions_cmd.command,
+        upgrade_cmd.command,
         zls_cmd.command,
     };
 
@@ -184,6 +186,7 @@ test "buildRootCommand registers expected subcommands" {
         "config",
         "env",
         "completions",
+        "upgrade",
         "zls",
     };
 
@@ -195,9 +198,11 @@ test "buildRootCommand registers expected subcommands" {
         try std.testing.expect(cmd.flags_by_name.contains("exact"));
     }
     try std.testing.expect(root.findCommand("shim") != null);
+    try std.testing.expect(root.findCommand("self-update") != null);
     _ = clean_cmd;
     _ = config_cmd;
     _ = env_cmd;
     _ = completions_cmd;
+    _ = upgrade_cmd;
     _ = zls_cmd;
 }

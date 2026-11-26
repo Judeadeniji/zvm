@@ -179,6 +179,17 @@ fn initHttpClient(
 
 /// Fetches an HTTP/HTTPS URL into an owned byte slice.
 pub fn fetchUrl(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap, url: []const u8) ![]u8 {
+    return fetchUrlWithHeaders(io, allocator, environ_map, url, &.{});
+}
+
+/// Fetches an HTTP/HTTPS URL with custom headers into an owned byte slice.
+pub fn fetchUrlWithHeaders(
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    url: []const u8,
+    extra_headers: []const std.http.Header,
+) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
 
@@ -190,6 +201,7 @@ pub fn fetchUrl(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap, u
 
     const res = try client.fetch(.{
         .location = .{ .url = url },
+        .extra_headers = extra_headers,
         .response_writer = &body.writer,
     });
     if (res.status != .ok) {
