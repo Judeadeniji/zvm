@@ -90,7 +90,7 @@ const bash_script =
     \\            if command -v zvm >/dev/null 2>&1; then
     \\                installed="$(zvm list 2>/dev/null | sed 's/^[* ]*//' | awk '{print $1}')"
     \\            fi
-    \\            COMPREPLY=( $(compgen -W "${installed} --exact --help" -- "${cur}") )
+    \\            COMPREPLY=( $(compgen -W "${installed} zls --zls --exact --help" -- "${cur}") )
     \\            ;;
     \\        current|doctor|list) COMPREPLY=( $(compgen -W "--exact --help" -- "${cur}") ) ;;
     \\        config)

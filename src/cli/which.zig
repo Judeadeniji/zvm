@@ -15,9 +15,15 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
         .description = "Display the binary path of the active or specified Zig version",
     }, handle);
     try cmd.addFlag(flags.exact);
+    try cmd.addFlag(.{
+        .name = "zls",
+        .description = "Print the path to the paired ZLS binary instead of zig",
+        .type = .Bool,
+        .default_value = .{ .Bool = false },
+    });
     try cmd.addPositionalArg(.{
         .name = "version",
-        .description = "Optional version to query path for",
+        .description = "Optional version (or 'zls') to query path for",
         .required = false,
     });
     return cmd;
@@ -25,42 +31,54 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
 
 fn handle(ctx: zli.CommandContext) WhichError!void {
     const app = ctx.getContextData(AppContext);
+    var want_zls = ctx.flag("zls", bool);
+    var version_arg = ctx.getArg("version");
 
-    if (ctx.getArg("version")) |raw_version| {
+    if (version_arg) |arg| {
+        if (std.ascii.eqlIgnoreCase(arg, "zls")) {
+            want_zls = true;
+            version_arg = null;
+        }
+    }
+
+    const target_ver: []u8 = if (version_arg) |raw_version| blk: {
         const parsed = zvm.Version.parse(raw_version) catch {
             try app.reporter.fail("Invalid Zig version '{s}'.\n", .{raw_version});
-            try app.reporter.hint("Use a version such as '0.17.0' or 'master'.\n", .{});
+            try app.reporter.hint("Use a version such as '0.17.0', 'master', or 'zls'.\n", .{});
             return error.Reported;
         };
-        const canonical = try parsed.toString(ctx.allocator);
-        defer ctx.allocator.free(canonical);
+        break :blk try parsed.toString(ctx.allocator);
+    } else blk: {
+        var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
+            .exact = flags.exactOverride(ctx),
+        }) catch |err| {
+            try app.reporter.reportError(err);
+            return error.Reported;
+        };
+        defer resolved.deinit(ctx.allocator);
+        break :blk try ctx.allocator.dupe(u8, resolved.version);
+    };
+    defer ctx.allocator.free(target_ver);
 
-        if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, canonical)) {
-            try app.reporter.fail("Zig version '{s}' is not installed.\n", .{canonical});
-            try app.reporter.hint("Run 'zvm install {s}' first.\n", .{canonical});
+    if (want_zls) {
+        if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, target_ver)) {
+            try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{target_ver});
+            try app.reporter.hint("Run 'zvm zls install {s}' to install it.\n", .{target_ver});
             return error.Reported;
         }
-        const bin_path = try app.paths.versionZigBin(ctx.allocator, canonical);
+        const bin_path = try app.paths.zlsVersionBin(ctx.allocator, target_ver);
         defer ctx.allocator.free(bin_path);
         try ctx.writer.print("{s}\n", .{bin_path});
         return;
     }
 
-    var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
-        .exact = flags.exactOverride(ctx),
-    }) catch |err| {
-        try app.reporter.reportError(err);
-        return error.Reported;
-    };
-    defer resolved.deinit(ctx.allocator);
-
-    if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version)) {
-        try app.reporter.fail("Resolved Zig version '{s}' is not installed.\n", .{resolved.version});
-        try app.reporter.hint("Run 'zvm install {s}' to install it.\n", .{resolved.version});
+    if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, target_ver)) {
+        try app.reporter.fail("Zig version '{s}' is not installed.\n", .{target_ver});
+        try app.reporter.hint("Run 'zvm install {s}' to install it.\n", .{target_ver});
         return error.Reported;
     }
 
-    const bin_path = try app.paths.versionZigBin(ctx.allocator, resolved.version);
+    const bin_path = try app.paths.versionZigBin(ctx.allocator, target_ver);
     defer ctx.allocator.free(bin_path);
     try ctx.writer.print("{s}\n", .{bin_path});
 }
