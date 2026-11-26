@@ -60,13 +60,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Zig 0.17.0
-        run: |
-          URL=$(curl -fsSL https://ziglang.org/download/index.json \
-                | python3 -c "import sys,json; print(json.load(sys.stdin)['0.17.0']['x86_64-linux']['tarball'])")
-          curl -fsSL "$URL" | tar -xJ
-          DIR=$(python3 -c "u='$URL'; print(u.rsplit('/',1)[-1].removesuffix('.tar.xz').removesuffix('.tar.gz'))")
-          echo "$PWD/$DIR" >> "$GITHUB_PATH"
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
 
       - name: Fetch Zig Minisign public key
         id: minisig
