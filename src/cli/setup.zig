@@ -67,7 +67,7 @@ fn handle(ctx: zli.CommandContext) !void {
     defer if (installed) |list| zvm.Paths.freeInstalledVersions(ctx.allocator, list);
     if (installed == null or installed.?.len == 0) {
         try ctx.writer.writeByte('\n');
-        try app.reporter.hint("Next: Run 'zvm install <version>' (e.g. 'zvm install 0.17.0', or 'zvm list-remote' to browse).\n", .{});
+        try app.reporter.hint("Next: Run 'zvm install <version>' (run 'zvm list-remote' to browse available versions).\n", .{});
         try app.reporter.muted("Optional: 'zvm completions <shell>' for tab completion, 'zvm config auto-install on' for automatic installs.\n", .{});
     } else if (res.outcome == .created) {
         try ctx.writer.writeByte('\n');

@@ -95,7 +95,7 @@ fn handle(ctx: zli.CommandContext) !void {
     defer zvm.Paths.freeInstalledVersions(ctx.allocator, versions);
     try app.reporter.status(.info, "Installed Zig versions: {d}\n", .{versions.len});
     if (versions.len == 0) {
-        try app.reporter.muted("       Next: Run 'zvm install 0.17.0' (or 'zvm list-remote' to browse versions).\n", .{});
+        try app.reporter.muted("       Next: Run 'zvm install <version>' (run 'zvm list-remote' to see available versions).\n", .{});
     }
 
     // 5. Active version resolution in current dir
