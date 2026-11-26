@@ -32,8 +32,9 @@ fn packageVersion(b: *std.Build) std.SemanticVersion {
         error.ParseZon => diagnostics.fatal(zon_path),
     };
 
-    return std.SemanticVersion.parse(package.version) catch |err|
-        std.debug.panic("invalid package version '{s}' in {s}: {t}", .{ package.version, zon_path, err });
+    const version_text = b.allocator.dupe(u8, package.version) catch @panic("out of memory");
+    return std.SemanticVersion.parse(version_text) catch |err|
+        std.debug.panic("invalid package version '{s}' in {s}: {t}", .{ version_text, zon_path, err });
 }
 
 // Although this function looks imperative, it does not perform the build

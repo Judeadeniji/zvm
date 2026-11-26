@@ -37,11 +37,19 @@ fn handle(ctx: zli.CommandContext) !void {
     const shim_path = try app.paths.zigShimPath(ctx.allocator);
     defer ctx.allocator.free(shim_path);
 
-    // Doctor only needs the shim to point at a zvm executable. The exact binary
-    // is irrelevant: `zvm setup` from a different build must not be reported as
-    // a broken shim.
-    var shim_status = try zvm.shim.inspectShim(app.paths, ctx.io, ctx.allocator, null);
+    // Doctor accepts a shim pointing to the current executable (even if renamed)
+    // or any other `zvm` executable (e.g., an older build).
+    const self_exe = std.process.executablePathAlloc(ctx.io, ctx.allocator) catch null;
+    defer if (self_exe) |p| ctx.allocator.free(p);
+
+    var shim_status = try zvm.shim.inspectShim(app.paths, ctx.io, ctx.allocator, self_exe);
     defer shim_status.deinit(ctx.allocator);
+
+    if (shim_status == .wrong_target and zvm.shim.isZvmExePath(shim_status.wrong_target)) {
+        const valid_target = try ctx.allocator.dupe(u8, shim_status.wrong_target);
+        shim_status.deinit(ctx.allocator);
+        shim_status = .{ .valid = valid_target };
+    }
 
     switch (shim_status) {
         .valid => |target| {
