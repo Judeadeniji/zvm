@@ -56,22 +56,30 @@ fn handle(ctx: zli.CommandContext) !void {
         .data = payload,
     });
 
-    try app.reporter.success("Pinned {s} to {s}.\n", .{ file_path, pinned_text });
-
     if (constraint.exactPin() != null) {
+        try app.reporter.success("Pinned Zig {s} in {s}.\n", .{ pinned_text, file_path });
         if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, pinned_text)) {
             try app.reporter.note("Zig version '{s}' is not installed yet. Run 'zvm install {s}' to install it.\n", .{ pinned_text, pinned_text });
         }
-        if (with_zls and !app.paths.isZlsInstalled(ctx.io, ctx.allocator, pinned_text)) {
-            try zls_cmd.installZlsWithSpinner(app, ctx, pinned_text, false);
+        if (with_zls) {
+            if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, pinned_text)) {
+                try app.reporter.info("ZLS for Zig {s} is already installed.\n", .{pinned_text});
+            } else {
+                try zls_cmd.installZlsWithSpinner(app, ctx, pinned_text, false);
+            }
         }
     } else {
+        try app.reporter.success("Pinned Zig constraint {s} in {s}.\n", .{ pinned_text, file_path });
         const matched = try zvm.resolver.findHighestMatchingInstalled(app.paths, ctx.io, ctx.allocator, constraint);
         defer if (matched) |m| ctx.allocator.free(m);
         if (matched) |m| {
             try app.reporter.info("Resolved locally installed version matching '{s}': {s}\n", .{ pinned_text, m });
-            if (with_zls and !app.paths.isZlsInstalled(ctx.io, ctx.allocator, m)) {
-                try zls_cmd.installZlsWithSpinner(app, ctx, m, false);
+            if (with_zls) {
+                if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, m)) {
+                    try app.reporter.info("ZLS for Zig {s} is already installed.\n", .{m});
+                } else {
+                    try zls_cmd.installZlsWithSpinner(app, ctx, m, false);
+                }
             }
         } else {
             try app.reporter.note("No locally installed Zig version satisfies '{s}'.\n", .{pinned_text});
