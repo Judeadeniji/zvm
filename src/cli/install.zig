@@ -188,4 +188,18 @@ fn handle(ctx: zli.CommandContext) !void {
             sig_note,
         });
     }
+
+    if (!res.already_installed) {
+        const default_ver = app.paths.readDefaultVersion(ctx.io, ctx.allocator) catch null;
+        defer if (default_ver) |v| ctx.allocator.free(v);
+        if (default_ver == null) {
+            try app.reporter.hint("Next: Run 'zvm use {s}' to set it as your global default (or 'zvm pin {s}' for a project).\n", .{ res.version, res.version });
+        }
+
+        var shim_status = zvm.shim.inspectShim(app.paths, ctx.io, ctx.allocator, null) catch null;
+        defer if (shim_status) |*s| s.deinit(ctx.allocator);
+        if (shim_status != null and shim_status.? == .missing) {
+            try app.reporter.muted("Tip: Run 'zvm setup' to create the 'zig' shim so 'zig' routes through zvm.\n", .{});
+        }
+    }
 }

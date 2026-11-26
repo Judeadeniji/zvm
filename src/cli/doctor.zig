@@ -94,6 +94,9 @@ fn handle(ctx: zli.CommandContext) !void {
     const versions = try app.paths.listInstalledVersions(ctx.io, ctx.allocator);
     defer zvm.Paths.freeInstalledVersions(ctx.allocator, versions);
     try app.reporter.status(.info, "Installed Zig versions: {d}\n", .{versions.len});
+    if (versions.len == 0) {
+        try app.reporter.muted("       Next: Run 'zvm install 0.17.0' (or 'zvm list-remote' to browse versions).\n", .{});
+    }
 
     // 5. Active version resolution in current dir
     var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
@@ -105,6 +108,9 @@ fn handle(ctx: zli.CommandContext) !void {
             else => "could not read the version configuration",
         };
         try app.reporter.status(.info, "Active version in '{s}': unresolved ({s})\n", .{ app.cwd, reason });
+        if (versions.len > 0 and err == zvm.errors.ResolveError.NoVersionConfigured) {
+            try app.reporter.muted("       Next: Run 'zvm use <version>' for a global default or 'zvm pin <version>' for this project.\n", .{});
+        }
         return;
     };
     defer resolved.deinit(ctx.allocator);

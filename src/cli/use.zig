@@ -46,4 +46,12 @@ fn handle(ctx: zli.CommandContext) UseError!void {
 
     try app.paths.writeDefaultVersion(ctx.io, canonical);
     try app.reporter.success("Global default Zig version set to {s}.\n", .{canonical});
+
+    var shim_status = zvm.shim.inspectShim(app.paths, ctx.io, ctx.allocator, null) catch null;
+    defer if (shim_status) |*s| s.deinit(ctx.allocator);
+    if (shim_status != null and shim_status.? == .missing) {
+        try app.reporter.hint("Next: Run 'zvm setup' to create the 'zig' shim, then 'zig version' to verify.\n", .{});
+    } else {
+        try app.reporter.muted("Run 'zig version' to verify (or 'zvm doctor' to inspect PATH and shim status).\n", .{});
+    }
 }

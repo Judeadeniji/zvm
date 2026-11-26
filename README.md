@@ -20,21 +20,30 @@ A fast, transparent Zig version manager written in Zig.
 
 ## Quick Start
 
-```bash
-# 1. Create the `zig` shim symlink in ~/.zvm/bin/ and check PATH precedence
-zvm setup
-zvm doctor
-
-# 2. Add ~/.zvm/bin to PATH (or eval shell hook)
-eval "$(zvm env bash)"
-
-# 3. Install and activate a Zig version
-zvm install 0.17.0
-zvm use 0.17.0
-
-# 4. Run zig transparently through the shim
-zig version
-```
+1. **Install `zvm`** — download the archive for your OS/arch from [GitHub Releases](https://github.com/Judeadeniji/zvm/releases) (or [build from source](#building-from-source)) and place the `zvm` binary somewhere in your `PATH` (e.g., `~/.local/bin/zvm`).
+2. **Create the `zig` shim**:
+   ```bash
+   zvm setup
+   ```
+3. **Add `~/.zvm/bin` to `PATH`** in your shell profile (`~/.bashrc`, `~/.zshrc`, `config.fish`, or PowerShell `$PROFILE`):
+   ```bash
+   eval "$(zvm env bash)"           # bash (or zsh / fish / powershell)
+   eval "$(zvm completions bash)"   # optional: tab completions
+   ```
+4. **Verify your setup**:
+   ```bash
+   zvm doctor
+   ```
+5. **Install and activate Zig**:
+   ```bash
+   zvm install 0.17.0
+   zvm use 0.17.0
+   zig version
+   ```
+6. **Optional extras**:
+   - **Per-project pin**: `zvm pin 0.16.0` (or `zvm install` inside a project with `.zig-version` / `build.zig.zon`).
+   - **Exact `minimum_zig_version`**: `zvm install --exact`, `ZVM_EXACT=1 zig build`, or `zvm config exact on`.
+   - **Auto-install missing versions**: `zvm config auto-install on` (or `ZVM_AUTO_INSTALL=1`).
 
 ## CLI Usage
 

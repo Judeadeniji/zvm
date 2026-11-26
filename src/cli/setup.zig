@@ -62,12 +62,23 @@ fn handle(ctx: zli.CommandContext) !void {
         });
         try printPathHint(&app.reporter, app.paths.bin_dir);
     }
+
+    const installed = zvm.Paths.listInstalledVersions(app.paths, ctx.io, ctx.allocator) catch null;
+    defer if (installed) |list| zvm.Paths.freeInstalledVersions(ctx.allocator, list);
+    if (installed == null or installed.?.len == 0) {
+        try ctx.writer.writeByte('\n');
+        try app.reporter.hint("Next: Run 'zvm install <version>' (e.g. 'zvm install 0.17.0', or 'zvm list-remote' to browse).\n", .{});
+        try app.reporter.muted("Optional: 'zvm completions <shell>' for tab completion, 'zvm config auto-install on' for automatic installs.\n", .{});
+    } else if (res.outcome == .created) {
+        try ctx.writer.writeByte('\n');
+        try app.reporter.hint("Next: Run 'zvm doctor' to verify your setup, or 'zig version' to test the shim.\n", .{});
+    }
 }
 
 fn printPathHint(reporter: *const report.Reporter, bin_dir: []const u8) !void {
     if (zvm.Paths.is_windows) {
-        try reporter.muted("Add '{s}' to the top of your user PATH environment variable.\n", .{bin_dir});
+        try reporter.muted("Add '{s}' to the top of your user PATH environment variable, or run:\n  zvm env powershell | Out-String | Invoke-Expression\n", .{bin_dir});
     } else {
-        try reporter.muted("Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n  export PATH=\"{s}:$PATH\"\n", .{bin_dir});
+        try reporter.muted("Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n  eval \"$(zvm env bash)\"   # or: export PATH=\"{s}:$PATH\"\n", .{bin_dir});
     }
 }
