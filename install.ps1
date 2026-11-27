@@ -11,6 +11,13 @@ $Version = if ($env:ZVM_VERSION) { $env:ZVM_VERSION } else { "latest" }
 if ($Version -eq "latest") {
     $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "zvm-installer" }
     $Tag = $Release.tag_name
+} elseif ($Version -eq "nightly") {
+    $Releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=30" -Headers @{ "User-Agent" = "zvm-installer" }
+    $Nightly = $Releases | Where-Object { $_.prerelease -and -not $_.draft -and $_.tag_name -like "*nightly*" } | Select-Object -First 1
+    if (-not $Nightly) {
+        throw "Failed to find a nightly zvm release"
+    }
+    $Tag = $Nightly.tag_name
 } else {
     $Tag = $Version
 }

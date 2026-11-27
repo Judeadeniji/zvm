@@ -71,9 +71,20 @@ pub fn build(b: *std.Build) void {
         "Override built-in Zig Minisign public key at compile time",
     ) orelse "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U";
 
+    const version_override = b.option(
+        []const u8,
+        "version",
+        "Override package version from build.zig.zon (e.g. 0.1.0-nightly.20261127+59b3757)",
+    );
+    const resolved_version = if (version_override) |ver_str| blk: {
+        const trimmed = std.mem.trimStart(u8, ver_str, "vV");
+        break :blk std.SemanticVersion.parse(trimmed) catch |err|
+            std.debug.panic("invalid -Dversion '{s}': {t}", .{ ver_str, err });
+    } else packageVersion(b);
+
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "minisig_public_key", minisig_key);
-    build_options.addOption(std.SemanticVersion, "version", packageVersion(b));
+    build_options.addOption(std.SemanticVersion, "version", resolved_version);
     const options_mod = build_options.createModule();
 
     const zli_dep = b.dependency("zli", .{

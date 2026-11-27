@@ -52,10 +52,10 @@ pub const UpgradeResult = struct {
     }
 };
 
-/// Builds the GitHub Releases API URL for latest stable, `nightly`, or a specific tag.
+/// Builds the GitHub Releases API URL for latest stable, `nightly` prereleases, or a specific tag.
 pub fn releaseApiUrl(allocator: Allocator, target_tag: ?[]const u8, nightly: bool) Allocator.Error![]u8 {
     if (nightly) {
-        return try allocator.print("{s}/tags/nightly", .{github_api_base});
+        return try allocator.print("{s}?per_page=30", .{github_api_base});
     }
     if (target_tag) |tag| {
         return try allocator.print("{s}/tags/{s}", .{ github_api_base, tag });
@@ -63,19 +63,12 @@ pub fn releaseApiUrl(allocator: Allocator, target_tag: ?[]const u8, nightly: boo
     return try allocator.print("{s}/latest", .{github_api_base});
 }
 
-/// Parses a GitHub Release JSON payload and picks the asset matching `target_key`.
-pub fn parseGithubRelease(
+fn parseGithubReleaseObject(
     allocator: Allocator,
-    json_bytes: []const u8,
+    root: std.json.ObjectMap,
     target_key: []const u8,
     is_windows: bool,
 ) !ReleaseAssetInfo {
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{});
-    defer parsed.deinit();
-
-    if (parsed.value != .object) return UpgradeError.InvalidReleaseMetadata;
-    const root = parsed.value.object;
-
     const tag_val = root.get("tag_name") orelse return UpgradeError.ReleaseNotFound;
     if (tag_val != .string or tag_val.string.len == 0) return UpgradeError.InvalidReleaseMetadata;
     const tag_name = tag_val.string;
@@ -128,6 +121,54 @@ pub fn parseGithubRelease(
     };
 }
 
+/// Parses a GitHub Release JSON payload and picks the asset matching `target_key`.
+pub fn parseGithubRelease(
+    allocator: Allocator,
+    json_bytes: []const u8,
+    target_key: []const u8,
+    is_windows: bool,
+) !ReleaseAssetInfo {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return UpgradeError.InvalidReleaseMetadata;
+    return try parseGithubReleaseObject(allocator, parsed.value.object, target_key, is_windows);
+}
+
+/// Parses a GitHub Releases list JSON payload and picks the newest non-draft nightly prerelease.
+pub fn parseLatestNightlyRelease(
+    allocator: Allocator,
+    json_bytes: []const u8,
+    target_key: []const u8,
+    is_windows: bool,
+) !ReleaseAssetInfo {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .array) return UpgradeError.InvalidReleaseMetadata;
+
+    var saw_nightly = false;
+    for (parsed.value.array.items) |item| {
+        if (item != .object) continue;
+        if (item.object.get("draft")) |dv| {
+            if (dv == .bool and dv.bool) continue;
+        }
+        const pre_val = item.object.get("prerelease") orelse continue;
+        if (pre_val != .bool or !pre_val.bool) continue;
+
+        const tag_val = item.object.get("tag_name") orelse continue;
+        if (tag_val != .string or std.mem.indexOf(u8, tag_val.string, "nightly") == null) continue;
+
+        saw_nightly = true;
+        return parseGithubReleaseObject(allocator, item.object, target_key, is_windows) catch |err| switch (err) {
+            UpgradeError.AssetNotFound => continue,
+            else => return err,
+        };
+    }
+
+    return if (saw_nightly) UpgradeError.AssetNotFound else UpgradeError.ReleaseNotFound;
+}
+
 /// Extracts the 64-char SHA-256 hex digest for `asset_name` from `SHA256SUMS.txt`.
 pub fn parseSha256Sums(sums_bytes: []const u8, asset_name: []const u8) ?[]const u8 {
     var line_it = std.mem.splitScalar(u8, sums_bytes, '\n');
@@ -148,14 +189,35 @@ pub fn parseSha256Sums(sums_bytes: []const u8, asset_name: []const u8) ?[]const 
     return null;
 }
 
-/// Returns true if `target_tag` is strictly newer than `current_version`.
-/// Nightly builds are always considered newer so they can be refreshed.
+fn isNightlyVersion(v: std.SemanticVersion) bool {
+    const pre = v.pre orelse return false;
+    return std.mem.startsWith(u8, pre, "nightly");
+}
+
+/// Returns true if `target_tag` is strictly newer than `current_version`, or switches
+/// from a stable release onto a nightly build.
 pub fn needsUpgrade(current_version: []const u8, target_tag: []const u8) bool {
     if (std.mem.eql(u8, target_tag, "nightly")) return true;
 
+    const clean_cur = std.mem.trimStart(u8, current_version, "vV");
     const clean_target = std.mem.trimStart(u8, target_tag, "vV");
-    const cur_v = Version.parse(current_version) catch return !std.mem.eql(u8, current_version, clean_target);
-    const tgt_v = Version.parse(clean_target) catch return !std.mem.eql(u8, current_version, clean_target);
+    const cur_v = Version.parse(clean_cur) catch return !std.mem.eql(u8, clean_cur, clean_target);
+    const tgt_v = Version.parse(clean_target) catch return !std.mem.eql(u8, clean_cur, clean_target);
+
+    if (cur_v.semver != null and tgt_v.semver != null) {
+        const cs = cur_v.semver.?;
+        const ts = tgt_v.semver.?;
+        if (!isNightlyVersion(cs) and isNightlyVersion(ts)) {
+            return true;
+        }
+        const ord = ts.order(cs);
+        if (ord != .eq) return ord == .gt;
+        // SemVer ignores build metadata (`+sha`); for same-day nightlies, a different commit is newer.
+        if (isNightlyVersion(ts)) {
+            return !std.mem.eql(u8, cs.build orelse "", ts.build orelse "");
+        }
+        return false;
+    }
 
     return tgt_v.order(cur_v) == .gt;
 }
@@ -182,6 +244,9 @@ pub fn checkRelease(
     defer allocator.free(json_bytes);
 
     const tkey = try downloader.hostTargetKey();
+    if (nightly) {
+        return try parseLatestNightlyRelease(allocator, json_bytes, tkey, Paths.is_windows);
+    }
     return try parseGithubRelease(allocator, json_bytes, tkey, Paths.is_windows);
 }
 
@@ -293,11 +358,54 @@ test "releaseApiUrl selects latest, nightly, or specific tag" {
 
     const nightly = try releaseApiUrl(allocator, null, true);
     defer allocator.free(nightly);
-    try std.testing.expectEqualStrings(github_api_base ++ "/tags/nightly", nightly);
+    try std.testing.expectEqualStrings(github_api_base ++ "?per_page=30", nightly);
 
     const tagged = try releaseApiUrl(allocator, "v0.2.0", false);
     defer allocator.free(tagged);
     try std.testing.expectEqualStrings(github_api_base ++ "/tags/v0.2.0", tagged);
+}
+
+test "parseLatestNightlyRelease picks newest non-draft nightly prerelease" {
+    const allocator = std.testing.allocator;
+    const fixture =
+        \\[
+        \\  {
+        \\    "tag_name": "v0.2.0",
+        \\    "prerelease": false,
+        \\    "draft": false,
+        \\    "assets": []
+        \\  },
+        \\  {
+        \\    "tag_name": "v0.1.0-nightly.20261128+deadbee",
+        \\    "prerelease": true,
+        \\    "draft": true,
+        \\    "assets": []
+        \\  },
+        \\  {
+        \\    "tag_name": "v0.1.0-rc.1",
+        \\    "prerelease": true,
+        \\    "draft": false,
+        \\    "assets": []
+        \\  },
+        \\  {
+        \\    "tag_name": "v0.1.0-nightly.20261127+59b3757",
+        \\    "prerelease": true,
+        \\    "draft": false,
+        \\    "assets": [
+        \\      {
+        \\        "name": "zvm-v0.1.0-nightly.20261127+59b3757-x86_64-linux.tar.gz",
+        \\        "size": 98765,
+        \\        "browser_download_url": "https://example.com/nightly.tar.gz"
+        \\      }
+        \\    ]
+        \\  }
+        \\]
+    ;
+
+    var info = try parseLatestNightlyRelease(allocator, fixture, "x86_64-linux", false);
+    defer info.deinit(allocator);
+    try std.testing.expectEqualStrings("v0.1.0-nightly.20261127+59b3757", info.tag_name);
+    try std.testing.expectEqualStrings("zvm-v0.1.0-nightly.20261127+59b3757-x86_64-linux.tar.gz", info.asset_name);
 }
 
 test "parseGithubRelease and parseSha256Sums extract asset metadata" {
@@ -353,10 +461,20 @@ test "parseGithubRelease and parseSha256Sums extract asset metadata" {
     try std.testing.expectEqual(@as(?[]const u8, null), parseSha256Sums(sums, "missing.tar.gz"));
 }
 
-test "needsUpgrade compares semver and always updates nightly" {
+test "needsUpgrade compares semver and versioned nightly builds" {
     try std.testing.expect(!needsUpgrade("0.1.0", "v0.1.0"));
     try std.testing.expect(needsUpgrade("0.1.0", "v0.2.0"));
     try std.testing.expect(needsUpgrade("0.1.0", "nightly"));
+    // Stable -> nightly channel switch.
+    try std.testing.expect(needsUpgrade("0.1.0", "v0.1.0-nightly.20261127+59b3757"));
+    // Same nightly build is already up to date; same-day newer commit is an upgrade.
+    try std.testing.expect(!needsUpgrade("0.1.0-nightly.20261127+59b3757", "v0.1.0-nightly.20261127+59b3757"));
+    try std.testing.expect(needsUpgrade("0.1.0-nightly.20261127+59b3757", "v0.1.0-nightly.20261127+deadbee"));
+    // Newer / older nightly dates.
+    try std.testing.expect(needsUpgrade("0.1.0-nightly.20261126+abc1111", "v0.1.0-nightly.20261127+59b3757"));
+    try std.testing.expect(!needsUpgrade("0.1.0-nightly.20261127+59b3757", "v0.1.0-nightly.20261126+abc1111"));
+    // Nightly -> stable release.
+    try std.testing.expect(needsUpgrade("0.1.0-nightly.20261127+59b3757", "v0.1.0"));
     // An older target is not an upgrade; downgrading requires --force.
     try std.testing.expect(!needsUpgrade("0.2.0", "v0.1.0"));
     try std.testing.expect(!needsUpgrade("0.2.0", "0.2.0"));

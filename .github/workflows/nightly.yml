@@ -16,7 +16,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compute nightly version
+        id: meta
+        run: |
+          BASE_VER=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -n 1 | cut -d- -f1 | cut -d+ -f1)
+          test -n "$BASE_VER"
+          DATE=$(date -u +%Y%m%d)
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          VERSION="${BASE_VER}-nightly.${DATE}+${SHORT_SHA}"
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -49,12 +70,12 @@ jobs:
           echo "key=$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Build nightly binary (${{ matrix.target }})
-        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe -Dminisig-key="${{ steps.minisig.outputs.key }}"
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe -Dminisig-key="${{ steps.minisig.outputs.key }}" -Dversion="${{ needs.prepare.outputs.version }}"
 
       - name: Package archive
         run: |
           mkdir -p dist
-          PKG="zvm-nightly-${{ matrix.target }}"
+          PKG="zvm-${{ needs.prepare.outputs.tag }}-${{ matrix.target }}"
           mkdir -p "stage/$PKG"
           cp zig-out/bin/* "stage/$PKG/"
           cp LICENSE README.md "stage/$PKG/"
@@ -71,7 +92,7 @@ jobs:
           path: dist/*
 
   publish:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v7
@@ -84,17 +105,19 @@ jobs:
           cd artifacts
           sha256sum * > SHA256SUMS.txt
 
-      - name: Update nightly pre-release
+      - name: Publish versioned nightly pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: "nightly (dev build)"
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: "${{ needs.prepare.outputs.tag }} (nightly)"
           prerelease: true
           make_latest: false
+          target_commitish: ${{ github.sha }}
           body: |
-            > ⚠️ **This is an automated development build** from the latest `main` commit.
+            > ⚠️ **This is an automated nightly development build** (`${{ needs.prepare.outputs.version }}`) from `main`.
             > It is not a stable release. Use a tagged `v*` release for production.
 
+            **Version**: `${{ needs.prepare.outputs.version }}`
             **Commit**: ${{ github.sha }}
             **Built**: ${{ github.event.head_commit.timestamp }}
           files: artifacts/*

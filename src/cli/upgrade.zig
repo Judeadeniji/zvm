@@ -69,11 +69,11 @@ fn handle(ctx: zli.CommandContext) !void {
     const force = ctx.flag("force", bool);
     const target_tag = ctx.getArg("version");
 
-    const current_ver = try ctx.allocator.print("{d}.{d}.{d}", .{
-        build_options.version.major,
-        build_options.version.minor,
-        build_options.version.patch,
-    });
+    const current_ver = try (zvm.Version{
+        .tag = .semver,
+        .semver = build_options.version,
+        .raw = "",
+    }).toString(ctx.allocator);
     defer ctx.allocator.free(current_ver);
 
     if (check_only) {

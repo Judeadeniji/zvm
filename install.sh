@@ -50,6 +50,13 @@ if [ "$VERSION" = "latest" ]; then
         echo "error: failed to determine latest zvm release tag" >&2
         exit 1
     fi
+elif [ "$VERSION" = "nightly" ]; then
+    TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=30" \
+        | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*nightly[^"]*\)".*/\1/p' | head -n 1)"
+    if [ -z "$TAG" ]; then
+        echo "error: failed to find a nightly zvm release tag" >&2
+        exit 1
+    fi
 else
     TAG="$VERSION"
 fi
