@@ -344,20 +344,31 @@ pub fn findHighestMatchingInstalled(
     var best_name: ?[]u8 = null;
     errdefer if (best_name) |b| allocator.free(b);
 
+    // Check the binary relative to the already-open directory: rebuilding an
+    // absolute path per candidate allocated twice on every installed version. The
+    // cheap parse runs first, so the lookup happens only for a version that could
+    // actually become the result.
+    var bin_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     while (try it.next(io)) |entry| {
-        if (!paths.isVersionInstalled(io, allocator, entry.name)) continue;
-
         const parsed = Version.parse(entry.name) catch continue;
         if (!constraint.satisfies(parsed)) continue;
-
-        if (best_ver == null or parsed.order(best_ver.?) == .gt) {
-            best_ver = parsed;
-            // Allocate the replacement before freeing the old name so a failed
-            // allocation leaves `best_name` valid for the `errdefer` above.
-            const replacement = try allocator.dupe(u8, entry.name);
-            if (best_name) |old| allocator.free(old);
-            best_name = replacement;
+        if (best_ver) |best| {
+            if (parsed.order(best) != .gt) continue;
         }
+
+        const bin_rel = std.fmt.bufPrint(&bin_buf, "{s}{c}{s}", .{
+            entry.name,
+            std.fs.path.sep,
+            Paths.zig_exe_name,
+        }) catch continue;
+        v_dir.access(io, bin_rel, .{}) catch continue;
+
+        best_ver = parsed;
+        // Allocate the replacement before freeing the old name so a failed
+        // allocation leaves `best_name` valid for the `errdefer` above.
+        const replacement = try allocator.dupe(u8, entry.name);
+        if (best_name) |old| allocator.free(old);
+        best_name = replacement;
     }
 
     return best_name;
@@ -727,6 +738,40 @@ test "resolve hierarchy stops the walk at the repository root" {
     defer from_repo.deinit(allocator);
     try std.testing.expectEqualStrings("0.12.0", from_repo.version);
     try std.testing.expectEqual(ResolutionSource.zig_version_file, from_repo.source);
+}
+
+test "findHighestMatchingInstalled ignores installed versions without a binary" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    for ([_][]const u8{ "0.13.0", "0.14.0" }) |ver| {
+        const v_dir = try paths.versionDir(allocator, ver);
+        defer allocator.free(v_dir);
+        try cwd.createDirPath(io, v_dir);
+
+        const bin_path = try paths.versionZigBin(allocator, ver);
+        defer allocator.free(bin_path);
+        try cwd.writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+    }
+    // Highest version directory exists but holds no compiler binary.
+    const empty_dir = try paths.versionDir(allocator, "0.15.0");
+    defer allocator.free(empty_dir);
+    try cwd.createDirPath(io, empty_dir);
+
+    const matched = try findHighestMatchingInstalled(&paths, io, allocator, Constraint.gte(try Version.parse("0.1.0")));
+    defer if (matched) |name| allocator.free(name);
+    try std.testing.expectEqualStrings("0.14.0", matched.?);
 }
 
 test "resolve hierarchy .zig-version semver constraint" {
