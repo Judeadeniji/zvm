@@ -123,7 +123,7 @@ pub const Router = struct {
     ///
     /// Split out of `routeAndExec` so the branch can be exercised without actually
     /// spawning an installer.
-    fn autoInstallCandidate(self: *const Router, current_dir: []const u8, err: anyerror) !?[]u8 {
+    fn autoInstallCandidate(self: *const Router, current_dir: []const u8, err: ResolveError) !?[]u8 {
         if (err != ResolveError.NoCompatibleVersionInstalled) return null;
         if (!isAutoInstallEnabled(self.paths, self.io, self.environ_map)) return null;
         return resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir);
