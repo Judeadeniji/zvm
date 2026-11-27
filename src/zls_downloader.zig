@@ -158,7 +158,7 @@ pub fn installZls(
     var artifact = try parseZlsArtifact(allocator, json_bytes, tkey);
     defer artifact.deinit(allocator);
 
-    if (!options.force and paths.isZlsInstalled(io, allocator, zig_version_key)) {
+    if (!options.force and paths.isZlsInstalled(io, zig_version_key)) {
         const current_meta = paths.readZlsVersionMeta(io, allocator, zig_version_key) catch null;
         defer if (current_meta) |m| allocator.free(m);
         if (current_meta != null and std.mem.eql(u8, current_meta.?, artifact.version)) {

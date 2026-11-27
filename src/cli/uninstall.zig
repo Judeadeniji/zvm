@@ -71,7 +71,7 @@ fn handle(ctx: zli.CommandContext) UninstallError!void {
 
     try app.reporter.success("Uninstalled Zig {s}.\n", .{canonical});
 
-    if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+    if (app.paths.isZlsInstalled(ctx.io, canonical)) {
         try app.reporter.muted("ZLS for Zig {s} is still installed; run 'zvm zls uninstall {s}' to remove it.\n", .{ canonical, canonical });
     }
 }

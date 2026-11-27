@@ -177,7 +177,7 @@ pub const Router = struct {
         };
         defer self.allocator.free(target_version);
 
-        if (!self.paths.isVersionInstalled(self.io, self.allocator, target_version)) {
+        if (!self.paths.isVersionInstalled(self.io, target_version)) {
             if (!auto_install or !self.autoInstallAndWait(target_version)) {
                 if (!auto_install) {
                     printStderr(self.io, "error: Zig version '{s}' is not installed.\nhint: Run 'zvm install {s}' to install it.\n", .{ target_version, target_version });
@@ -236,7 +236,7 @@ pub const Router = struct {
         var chosen_version = try self.allocator.dupe(u8, target_zig_version);
         defer self.allocator.free(chosen_version);
 
-        if (!self.paths.isZlsInstalled(self.io, self.allocator, chosen_version)) {
+        if (!self.paths.isZlsInstalled(self.io, chosen_version)) {
             if (auto_install) {
                 printStderr(self.io, "[zvm] Auto-installing ZLS for Zig {s}...\n", .{chosen_version});
                 var res = zls_downloader.installZls(self.paths, self.io, self.allocator, self.environ_map, chosen_version, .{}) catch |err| {
@@ -247,7 +247,7 @@ pub const Router = struct {
             } else if (try self.paths.readZlsDefaultVersion(self.io, self.allocator)) |zls_def| {
                 self.allocator.free(chosen_version);
                 chosen_version = zls_def;
-                if (!self.paths.isZlsInstalled(self.io, self.allocator, chosen_version)) {
+                if (!self.paths.isZlsInstalled(self.io, chosen_version)) {
                     printStderr(self.io, "error: ZLS for Zig '{s}' is not installed.\nhint: Run 'zvm zls install {s}' to install it.\n", .{ target_zig_version, target_zig_version });
                     std.process.exit(1);
                 }

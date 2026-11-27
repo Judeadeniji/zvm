@@ -61,7 +61,7 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
     defer ctx.allocator.free(target_ver);
 
     if (want_zls) {
-        if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, target_ver)) {
+        if (!app.paths.isZlsInstalled(ctx.io, target_ver)) {
             try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{target_ver});
             try app.reporter.hint("Run 'zvm zls install {s}' to install it.\n", .{target_ver});
             return error.Reported;
@@ -72,7 +72,7 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
         return;
     }
 
-    if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, target_ver)) {
+    if (!app.paths.isVersionInstalled(ctx.io, target_ver)) {
         try app.reporter.fail("Zig version '{s}' is not installed.\n", .{target_ver});
         try app.reporter.hint("Run 'zvm install {s}' to install it.\n", .{target_ver});
         return error.Reported;

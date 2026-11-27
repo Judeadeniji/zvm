@@ -48,7 +48,7 @@ fn handle(ctx: zli.CommandContext) !void {
     for (releases) |rel| {
         if (!show_all and !rel.has_host_target) continue;
 
-        const installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, rel.name);
+        const installed = app.paths.isVersionInstalled(ctx.io, rel.name);
         if (installed) {
             try app.reporter.active("* ");
         } else {

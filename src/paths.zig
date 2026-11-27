@@ -152,11 +152,20 @@ pub const Paths = struct {
     }
 
     /// Checks if a given version is installed (i.e. its zig binary exists).
-    pub fn isVersionInstalled(self: *const Paths, io: Io, allocator: Allocator, version: []const u8) bool {
-        const bin_path = self.versionZigBin(allocator, version) catch return false;
-        defer allocator.free(bin_path);
-        const cwd = Io.Dir.cwd();
-        cwd.access(io, bin_path, .{}) catch return false;
+    ///
+    /// The path is formatted into a stack buffer: this is a single existence check
+    /// called on every resolve and every remote release listing, and building the
+    /// path with two joins allocated twice per call while no caller needs it.
+    pub fn isVersionInstalled(self: *const Paths, io: Io, version: []const u8) bool {
+        var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+        const bin_path = std.fmt.bufPrint(&buf, "{s}{c}{s}{c}{s}", .{
+            self.versions_dir,
+            std.fs.path.sep,
+            version,
+            std.fs.path.sep,
+            zig_exe_name,
+        }) catch return false;
+        Io.Dir.cwd().access(io, bin_path, .{}) catch return false;
         return true;
     }
 
@@ -284,10 +293,17 @@ pub const Paths = struct {
         return std.fs.path.join(allocator, &.{ v_dir, zls_exe_name });
     }
 
-    /// Checks if ZLS is installed for the given Zig version.
-    pub fn isZlsInstalled(self: *const Paths, io: Io, allocator: Allocator, zig_version: []const u8) bool {
-        const bin_path = self.zlsVersionBin(allocator, zig_version) catch return false;
-        defer allocator.free(bin_path);
+    /// Checks if ZLS is installed for the given Zig version. Allocation-free for the
+    /// same reason as `isVersionInstalled`.
+    pub fn isZlsInstalled(self: *const Paths, io: Io, zig_version: []const u8) bool {
+        var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+        const bin_path = std.fmt.bufPrint(&buf, "{s}{c}{s}{c}{s}", .{
+            self.zls_versions_dir,
+            std.fs.path.sep,
+            zig_version,
+            std.fs.path.sep,
+            zls_exe_name,
+        }) catch return false;
         Io.Dir.cwd().access(io, bin_path, .{}) catch return false;
         return true;
     }

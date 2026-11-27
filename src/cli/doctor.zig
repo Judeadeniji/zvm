@@ -172,11 +172,11 @@ fn handle(ctx: zli.CommandContext) !void {
     };
     defer resolved.deinit(ctx.allocator);
 
-    const is_installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version);
+    const is_installed = app.paths.isVersionInstalled(ctx.io, resolved.version);
     const state = if (is_installed) "installed" else "not installed";
     try app.reporter.status(.info, "Active version in '{s}': {s} ({s})\n", .{ app.cwd, resolved.version, state });
 
-    if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, resolved.version)) {
+    if (app.paths.isZlsInstalled(ctx.io, resolved.version)) {
         const zls_meta = app.paths.readZlsVersionMeta(ctx.io, ctx.allocator, resolved.version) catch null;
         defer if (zls_meta) |m| ctx.allocator.free(m);
         if (zls_meta) |m| {

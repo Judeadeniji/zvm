@@ -302,7 +302,7 @@ fn handleUse(ctx: zli.CommandContext) !void {
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
 
-    if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+    if (!app.paths.isZlsInstalled(ctx.io, canonical)) {
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{canonical});
         try app.reporter.hint("Run 'zvm zls install {s}' first.\n", .{canonical});
         return error.Reported;
@@ -317,7 +317,7 @@ fn handleWhich(ctx: zli.CommandContext) !void {
     const zig_ver = try resolveTargetZigVersion(app, ctx, ctx.getArg("version"));
     defer ctx.allocator.free(zig_ver);
 
-    if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, zig_ver)) {
+    if (!app.paths.isZlsInstalled(ctx.io, zig_ver)) {
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{zig_ver});
         try app.reporter.hint("Run 'zvm zls install {s}' to install it.\n", .{zig_ver});
         return error.Reported;
@@ -342,7 +342,7 @@ fn handleUninstall(ctx: zli.CommandContext) !void {
     const v_dir = try app.paths.zlsVersionDir(ctx.allocator, canonical);
     defer ctx.allocator.free(v_dir);
 
-    if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+    if (!app.paths.isZlsInstalled(ctx.io, canonical)) {
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{canonical});
         return error.Reported;
     }

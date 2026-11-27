@@ -766,7 +766,7 @@ pub fn installVersion(
     errdefer allocator.free(install_dir);
 
     const is_master = std.mem.eql(u8, version_key, "master");
-    if (!options.force and !is_master and paths.isVersionInstalled(io, allocator, version_key)) {
+    if (!options.force and !is_master and paths.isVersionInstalled(io, version_key)) {
         const version_copy = try allocator.dupe(u8, version_key);
         errdefer allocator.free(version_copy);
         const resolved_copy = try allocator.dupe(u8, version_key);
@@ -786,7 +786,7 @@ pub fn installVersion(
     defer artifact.deinit(allocator);
 
     // For `master`, compare against stored `.zvm-version` so up-to-date builds skip download.
-    if (!options.force and is_master and paths.isVersionInstalled(io, allocator, version_key)) {
+    if (!options.force and is_master and paths.isVersionInstalled(io, version_key)) {
         const current_meta = paths.readVersionMeta(io, allocator, version_key) catch null;
         defer if (current_meta) |m| allocator.free(m);
         if (current_meta != null and std.mem.eql(u8, current_meta.?, artifact.resolved_version)) {

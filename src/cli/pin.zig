@@ -58,11 +58,11 @@ fn handle(ctx: zli.CommandContext) !void {
 
     if (constraint.exactPin() != null) {
         try app.reporter.success("Pinned Zig {s} in {s}.\n", .{ pinned_text, file_path });
-        if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, pinned_text)) {
+        if (!app.paths.isVersionInstalled(ctx.io, pinned_text)) {
             try app.reporter.note("Zig version '{s}' is not installed yet. Run 'zvm install {s}' to install it.\n", .{ pinned_text, pinned_text });
         }
         if (with_zls) {
-            if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, pinned_text)) {
+            if (app.paths.isZlsInstalled(ctx.io, pinned_text)) {
                 try app.reporter.info("ZLS for Zig {s} is already installed.\n", .{pinned_text});
             } else {
                 try zls_cmd.installZlsWithSpinner(app, ctx, pinned_text, false);
@@ -75,7 +75,7 @@ fn handle(ctx: zli.CommandContext) !void {
         if (matched) |m| {
             try app.reporter.info("Resolved locally installed version matching '{s}': {s}\n", .{ pinned_text, m });
             if (with_zls) {
-                if (app.paths.isZlsInstalled(ctx.io, ctx.allocator, m)) {
+                if (app.paths.isZlsInstalled(ctx.io, m)) {
                     try app.reporter.info("ZLS for Zig {s} is already installed.\n", .{m});
                 } else {
                     try zls_cmd.installZlsWithSpinner(app, ctx, m, false);

@@ -168,6 +168,12 @@ audit time. Commit hashes are from the fix series that followed the audit.
       already-open `versions` directory: one `access` syscall per entry, no per-entry
       allocation beyond the returned name.
   - `2b00bd7`.
+- [x] `Paths.isVersionInstalled` / `isZlsInstalled` built the binary path with two heap
+      joins and freed it per call, and they run on every resolve, every router dispatch
+      and once per entry in `zvm list --remote`. Both now format
+      `"<dir>/<version>/<exe>"` into a stack buffer and `access` it: one syscall, no
+      allocation. The `allocator` argument had no other use, so it is gone from the
+      signatures and the ~20 call sites.
 - [ ] De-duplicate env-boolean parsing (`resolver.exactEnabled`,
       `router.isAutoInstallEnabled`); `report.colorMode` and `config.ConfigAction` have
       intentionally different vocabularies.

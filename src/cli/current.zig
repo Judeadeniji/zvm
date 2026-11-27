@@ -53,7 +53,7 @@ fn handle(ctx: zli.CommandContext) !void {
     };
     defer resolved.deinit(ctx.allocator);
 
-    const installed = app.paths.isVersionInstalled(ctx.io, ctx.allocator, resolved.version);
+    const installed = app.paths.isVersionInstalled(ctx.io, resolved.version);
 
     try app.reporter.version(resolved.version);
     try ctx.writer.writeAll(" (");

@@ -46,7 +46,7 @@ fn handle(ctx: zli.CommandContext) !void {
     const canonical = try parsed.toString(ctx.allocator);
     defer ctx.allocator.free(canonical);
 
-    if (!app.paths.isVersionInstalled(ctx.io, ctx.allocator, canonical)) {
+    if (!app.paths.isVersionInstalled(ctx.io, canonical)) {
         try app.reporter.fail("Zig version '{s}' is not installed.\n", .{canonical});
         try app.reporter.hint("Run 'zvm install {s}' first.\n", .{canonical});
         return error.Reported;
@@ -56,7 +56,7 @@ fn handle(ctx: zli.CommandContext) !void {
     try app.reporter.success("Global default Zig version set to {s}.\n", .{canonical});
 
     if (with_zls) {
-        if (!app.paths.isZlsInstalled(ctx.io, ctx.allocator, canonical)) {
+        if (!app.paths.isZlsInstalled(ctx.io, canonical)) {
             try zls_cmd.installZlsWithSpinner(app, ctx, canonical, false);
         }
         try app.paths.writeZlsDefaultVersion(ctx.io, canonical);
