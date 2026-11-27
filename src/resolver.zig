@@ -230,8 +230,37 @@ fn appendName(buf: []u8, dir: []const u8, name: []const u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, name }) catch null;
 }
 
-/// State for walking `start_dir` and its ancestors, one level at a time, stopping
-/// at the repository root.
+/// Whether a repository root sits strictly between `start_dir` and `found_dir`, the
+/// level holding a config file. A `.zig-version` or manifest above that root belongs
+/// to an enclosing repository, not to this project.
+///
+/// `found_dir` must be `start_dir` or one of its ancestors; both are prefixes of the
+/// same path buffer, so the walk compares lengths instead of rebuilding paths.
+///
+/// Checked only once a config was found: probing `.git` on every ancestor made a
+/// path with no config pay a lookup per level, and that path always falls through to
+/// the global default regardless of a repository boundary.
+fn crossedRepositoryRoot(io: Io, start_dir: []const u8, found_dir: []const u8) bool {
+    const cwd = Io.Dir.cwd();
+    // Own buffer: callers still hold slices of their own path buffer for the
+    // config file they just found.
+    var git_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    // Ascend from the start directory towards `found_dir`; the found level itself is
+    // a valid home for a config, so it is never probed.
+    var current = start_dir;
+    while (std.fs.path.dirname(current)) |parent| {
+        if (parent.len <= found_dir.len) return false;
+        const git_path = appendName(&git_buf, parent, ".git") orelse return false;
+        cwd.access(io, git_path, .{}) catch {
+            current = parent;
+            continue;
+        };
+        return true;
+    }
+    return false;
+}
+
+/// State for walking `start_dir` and its ancestors, one level at a time.
 ///
 /// The path lives in one owned buffer that a parent step only shortens, so a walk
 /// costs no allocations per level. Candidate files are still probed by full path:
@@ -255,14 +284,6 @@ const AncestorWalk = struct {
 
     fn path(self: *const AncestorWalk) []const u8 {
         return self.path_buf[0..self.path_len];
-    }
-
-    /// Whether the current level is a repository root. A `.zig-version` or manifest
-    /// above it belongs to an enclosing repository, not to this project.
-    fn isRepoRoot(self: *const AncestorWalk, io: Io, name_buf: []u8) bool {
-        const git_path = appendName(name_buf, self.path(), ".git") orelse return false;
-        Io.Dir.cwd().access(io, git_path, .{}) catch return false;
-        return true;
     }
 
     /// Moves to the parent directory. Returns false when the walk is over.
@@ -293,11 +314,11 @@ pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []cons
         };
         defer if (zon_bytes) |bytes| allocator.free(bytes);
         if (zon_bytes) |bytes| {
+            if (crossedRepositoryRoot(io, start_dir, walk.path())) return null;
             const extracted = try extractMinimumZigVersion(allocator, bytes);
             if (extracted.version) |min_str| return min_str;
         }
 
-        if (walk.isRepoRoot(io, &path_buf)) break;
         if (!walk.toParent()) break;
     }
 
@@ -428,6 +449,8 @@ fn resolveWalk(
             if (zig_version_text) |text| {
                 const trimmed = std.mem.trim(u8, text, " \t\r\n");
                 if (trimmed.len > 0) {
+                    // A pin above the repository root belongs to an enclosing project.
+                    if (crossedRepositoryRoot(io, start_dir, walk.path())) break;
                     // A `.zig-version` file is authoritative: an unparseable file must be
                     // reported, never treated as a version name or silently skipped.
                     const constraint = Constraint.parse(trimmed) catch
@@ -457,6 +480,7 @@ fn resolveWalk(
             };
             defer if (zon_text) |text| allocator.free(text);
             if (zon_text) |zon_bytes| {
+                if (crossedRepositoryRoot(io, start_dir, walk.path())) break;
                 const extracted = try extractMinimumZigVersion(allocator, zon_bytes);
                 defer if (extracted.version) |s| allocator.free(s);
                 // Report the first rejected manifest even when the fallback scan
@@ -487,9 +511,6 @@ fn resolveWalk(
             }
         }
 
-        // The repository root bounds the walk: a pin above it belongs to an
-        // enclosing project, and checking it here is the expensive part.
-        if (walk.isRepoRoot(io, &path_buf)) break;
         if (!walk.toParent()) break;
     }
 

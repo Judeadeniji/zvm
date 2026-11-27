@@ -147,15 +147,21 @@ audit time. Commit hashes are from the fix series that followed the audit.
       upward open, which is not fewer syscalls. Making the walk materially faster
       would require a semantic change (stopping at the repository root) or a
       resolution cache with its own invalidation cost.
-- [x] The walk now stops at the repository root (nearest ancestor containing `.git`),
-      so a pin in an enclosing repository is not applied to a nested checkout.
-  - Measured (3000 resolutions, ReleaseFast, 20-level path with `.git` five levels
-    up): 549-556 ms before, 253-280 ms after, i.e. ~2.1x faster.
-  - Cost: the extra `.git` lookup is ~2.7 us per level when no repository root is
-    found, so the same full 20-level walk goes 555-586 ms -> 797-841 ms. That is
-    paid only by paths that never reach a repository root.
+- [x] The walk ignores configs above the repository root (nearest ancestor containing
+      `.git`), so a pin in an enclosing repository is not applied to a nested checkout.
+  - A `.git` probe on every ancestor cost ~2.7 us per level and pushed the full
+    20-level walk from 555-586 ms to 797-841 ms for paths with no repository root.
+  - The boundary is now resolved only once a config file was actually found above the
+    start directory (`crossedRepositoryRoot`): the levels between the start directory
+    and the found config are probed, and the found level itself is exempt. A path with
+    no config pays nothing, because it falls through to the global default whatever the
+    boundary is.
+  - Measured (3000 resolutions, ReleaseFast, 20-level path, no config): 797-841 ms with
+    the per-level probe, 559-594 ms now, i.e. back to the pre-boundary baseline.
+    With a pin above the repository root: 587-610 ms (boundary probes run only for that
+    case, ~14 lookups for a 20-level path).
   - `.git` may be a file (worktrees, submodules); `access` covers both.
-  - `d1e1da1`.
+  - `59b3757`.
 - [x] `Paths.listInstalledVersions` / `listInstalledZlsVersions` checked the binary by
       allocating two absolute paths (`versionDir` join + `versionZigBin` join) per entry.
       Both now format `"<entry>/zig"` into a stack buffer and `access` it relative to the
