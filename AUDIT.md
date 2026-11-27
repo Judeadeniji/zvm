@@ -178,6 +178,9 @@ audit time. Commit hashes are from the fix series that followed the audit.
       the same trimming and case-insensitive `1/true/yes` and `0/false/no` matching.
       Both now call `env_flags.boolOverride`, which also documents why an unrecognized
       value falls through to the marker file instead of erroring.
+  - Tests cover the vocabulary the modules actually consume (padded, upper-case, and
+    unrecognized values falling back to the marker), not just the `1`/`false`
+    spellings.
   - `report.colorMode` and `config.ConfigAction` are left alone: they accept their own
     vocabularies (`auto`/`always`/`never`, subcommand-like words) on purpose.
 - [x] Dead code removed: `Constraint.parse`'s unused join buffer, `targetKey`'s discarded
@@ -187,10 +190,8 @@ audit time. Commit hashes are from the fix series that followed the audit.
 - [x] `self_updater.upgradeSelf` never removed the downloaded archive from `cache/`,
       so every upgrade left a release tarball behind until some later `zvm clean`. It
       is deleted after the atomic replacement, best-effort so a failed delete cannot
-      turn a completed upgrade into an error.
-  - Tests: the flag vocabulary that the resolver and router actually consume (padded,
-    upper-case, unrecognized values falling back to the marker) is now covered, not
-    just the `1`/`false` spellings.
+      turn a completed upgrade into an error. Verified against the real `v0.1.0`
+      release: after a successful upgrade `cache/` is empty.
 - [ ] Progress updates every 256 KiB reformat floats; a coarser interval would be
       smoother on slow links (left as-is for responsiveness).
 
