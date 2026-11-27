@@ -6,6 +6,7 @@ zig-pkg/
 .vscode/
 .claude/
 .codestudio/
+.freebuff/
 
 # Agent config dirs (not relevant to end users)
 .agents/
