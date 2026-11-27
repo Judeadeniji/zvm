@@ -143,7 +143,8 @@ pub fn run(init: std.process.Init) !u8 {
         if (err != error.Reported and !isZliCommandError(err)) {
             reporter.reportError(err) catch {};
         }
-        return 1;
+        // Handlers that reported a specific reason may also name the status.
+        return if (app_ctx.exit_code != 0) app_ctx.exit_code else 1;
     };
     return 0;
 }

@@ -161,6 +161,19 @@ zvm env --editor vscode         # Print config for vscode, nvim, helix, emacs, o
 
 Editor setup guides: [VS Code](docs/editors/vscode.md) · [Neovim](docs/editors/neovim.md) · [Helix](docs/editors/helix.md) · [Emacs](docs/editors/emacs.md) · [Zed](docs/editors/zed.md)
 
+### Exit codes
+
+`zvm install` exits with a status that names *why* the install failed, so scripts do not have to parse the message:
+
+| Code | Meaning |
+|---|---|
+| `1` | Generic failure (invalid arguments, unsatisfied project pin) |
+| `2` | The requested version, or a build for this platform, does not exist |
+| `3` | The download from ziglang.org failed |
+| `4` | A SHA-256 checksum or Minisig signature did not verify |
+
+Other commands report failures with `1`.
+
 ---
 
 ## Command Reference

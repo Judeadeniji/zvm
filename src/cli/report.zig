@@ -303,18 +303,31 @@ pub const Reporter = struct {
                 try self.fail("Could not write to disk.\n", .{});
                 try self.hint("Check free disk space and write permissions, then try again.\n", .{});
             },
-            error.ConnectionRefused, error.ConnectionTimedOut, error.NetworkUnreachable, error.NameServerFailure => {
+            error.BrokenPipe, error.Canceled => {},
+            else => if (isNetworkError(err)) {
                 try self.fail("Could not reach ziglang.org.\n", .{});
                 try self.hint("Check your network connection and try again.\n", .{});
-            },
-            error.BrokenPipe, error.Canceled => {},
-            else => {
+            } else {
                 try self.fail("Unexpected failure ({s}).\n", .{@errorName(err)});
                 try self.hint("Run 'zvm doctor' to check your setup, or report this issue.\n", .{});
             },
         }
     }
 };
+
+/// Whether `err` is a transport failure, i.e. the host could not be reached. Callers
+/// that map failures onto exit codes classify them the same way `reportError` does,
+/// since an unreachable host surfaces as one of these and not as a wrapped error.
+pub fn isNetworkError(err: anyerror) bool {
+    return switch (err) {
+        error.ConnectionRefused,
+        error.ConnectionTimedOut,
+        error.NetworkUnreachable,
+        error.NameServerFailure,
+        => true,
+        else => false,
+    };
+}
 
 fn colorMode(environ_map: ?*const std.process.Environ.Map) ColorMode {
     const env = environ_map orelse return .auto;

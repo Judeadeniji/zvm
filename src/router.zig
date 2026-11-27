@@ -446,7 +446,7 @@ test "resolveZlsVersion auto-installs the paired ZLS or reports why it could not
     StubZlsInstaller.calls = 0;
     StubZlsInstaller.failure = null;
     try std.testing.expectError(error.Reported, without_auto.resolveZlsVersion(tmp_path));
-    try std.testing.expectEqual(@as(usize, 0), StubZlsInstaller.calls);
+    try std.testing.expectEqual(0, StubZlsInstaller.calls);
     try std.testing.expect(!paths.isZlsInstalled(io, "0.19.0"));
 
     try env.put("ZVM_AUTO_INSTALL", "1");
@@ -457,7 +457,7 @@ test "resolveZlsVersion auto-installs the paired ZLS or reports why it could not
     StubZlsInstaller.calls = 0;
     StubZlsInstaller.failure = error.DownloadFailed;
     try std.testing.expectError(error.Reported, router.resolveZlsVersion(tmp_path));
-    try std.testing.expectEqual(@as(usize, 1), StubZlsInstaller.calls);
+    try std.testing.expectEqual(1, StubZlsInstaller.calls);
     try std.testing.expect(!paths.isZlsInstalled(io, "0.19.0"));
 
     // A successful install is what the router then runs.
@@ -467,7 +467,7 @@ test "resolveZlsVersion auto-installs the paired ZLS or reports why it could not
     defer allocator.free(version);
     try std.testing.expectEqualStrings("0.19.0", version);
     try std.testing.expectEqualStrings("0.19.0", StubZlsInstaller.last.?);
-    try std.testing.expectEqual(@as(usize, 1), StubZlsInstaller.calls);
+    try std.testing.expectEqual(1, StubZlsInstaller.calls);
     try std.testing.expect(paths.isZlsInstalled(io, "0.19.0"));
 }
 
@@ -511,7 +511,7 @@ test "resolveTargetVersion auto-installs the minimum a project requires" {
     StubInstaller.calls = 0;
     StubInstaller.failure = error.DownloadFailed;
     try std.testing.expectError(error.Reported, router.resolveTargetVersion(tmp_path));
-    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expectEqual(1, StubInstaller.calls);
     try std.testing.expect(!paths.isVersionInstalled(io, "0.19.0"));
 
     // A successful one is what the router then runs.
@@ -521,7 +521,7 @@ test "resolveTargetVersion auto-installs the minimum a project requires" {
     defer allocator.free(version);
     try std.testing.expectEqualStrings("0.19.0", version);
     try std.testing.expectEqualStrings("0.19.0", StubInstaller.last.?);
-    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expectEqual(1, StubInstaller.calls);
     try std.testing.expect(paths.isVersionInstalled(io, "0.19.0"));
 }
 
@@ -563,7 +563,7 @@ test "resolveTargetVersion installs an exact pin that is missing and refuses wit
     var without_auto = Router.init(&paths, io, allocator, &env);
     StubInstaller.calls = 0;
     try std.testing.expectError(error.Reported, without_auto.resolveTargetVersion(tmp_path));
-    try std.testing.expectEqual(@as(usize, 0), StubInstaller.calls);
+    try std.testing.expectEqual(0, StubInstaller.calls);
 
     try env.put("ZVM_AUTO_INSTALL", "1");
     var router = Router.init(&paths, io, allocator, &env);
@@ -574,7 +574,7 @@ test "resolveTargetVersion installs an exact pin that is missing and refuses wit
     const version = try router.resolveTargetVersion(tmp_path);
     defer allocator.free(version);
     try std.testing.expectEqualStrings("0.19.0", version);
-    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expectEqual(1, StubInstaller.calls);
     try std.testing.expect(paths.isVersionInstalled(io, "0.19.0"));
 }
 
