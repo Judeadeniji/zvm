@@ -980,6 +980,50 @@ test "persistent exact marker enables exact mode unless ZVM_EXACT=0 overrides it
     try std.testing.expectEqualStrings("0.17.0", env_disabled.version);
 }
 
+test "ZVM_EXACT vocabulary drives resolution and unknown values fall back to the marker" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try setupBuildZonProject(&paths, io, allocator, tmp_path, "0.15.2");
+
+    var env_map = EnvironMap.init(allocator);
+    defer env_map.deinit();
+
+    // Padded and upper-case values are still understood.
+    try env_map.put("ZVM_EXACT", " Yes \n");
+    {
+        var resolved = try resolve(&paths, io, allocator, &env_map, tmp_path);
+        defer resolved.deinit(allocator);
+        try std.testing.expectEqualStrings("0.15.2", resolved.version);
+    }
+
+    // An unrecognized value is not an error and not a silent "true": without a
+    // marker the default lower-bound behaviour stays in place.
+    try env_map.put("ZVM_EXACT", "maybe");
+    {
+        var resolved = try resolve(&paths, io, allocator, &env_map, tmp_path);
+        defer resolved.deinit(allocator);
+        try std.testing.expectEqualStrings("0.17.0", resolved.version);
+    }
+
+    // ...and with the marker set it still falls back to the marker rather than
+    // discarding the persistent setting.
+    try paths.setMarker(io, "exact", true);
+    {
+        var resolved = try resolve(&paths, io, allocator, &env_map, tmp_path);
+        defer resolved.deinit(allocator);
+        try std.testing.expectEqualStrings("0.15.2", resolved.version);
+    }
+}
+
 test "minimum_zig_version is honored in zon manifests larger than a small buffer" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

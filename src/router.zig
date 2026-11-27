@@ -300,6 +300,42 @@ test "termToExitCode and spawnAndWait propagation" {
     }
 }
 
+test "ZVM_AUTO_INSTALL vocabulary reaches the routing decision" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+
+    // `routeAndExec` reads this once per invocation; every accepted spelling has to
+    // survive it, not just "1".
+    for ([_][]const u8{ "1", "true", "TRUE", " yes " }) |value| {
+        try env.put("ZVM_AUTO_INSTALL", value);
+        try std.testing.expect(Router.isAutoInstallEnabled(&paths, io, &env));
+    }
+    for ([_][]const u8{ "0", "false", "NO" }) |value| {
+        try env.put("ZVM_AUTO_INSTALL", value);
+        try paths.setMarker(io, "auto-install", true);
+        try std.testing.expect(!Router.isAutoInstallEnabled(&paths, io, &env));
+    }
+
+    // An unrecognized value leaves the persistent marker in charge.
+    try env.put("ZVM_AUTO_INSTALL", "sometimes");
+    try std.testing.expect(Router.isAutoInstallEnabled(&paths, io, &env));
+    try paths.setMarker(io, "auto-install", false);
+    try std.testing.expect(!Router.isAutoInstallEnabled(&paths, io, &env));
+}
+
 test "isAutoInstallEnabled checks ZVM_AUTO_INSTALL and auto-install marker" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
