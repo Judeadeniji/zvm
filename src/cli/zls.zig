@@ -7,6 +7,7 @@ const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
 const flags = @import("flags.zig");
 const report = @import("report.zig");
+const exit_codes = @import("exit_codes.zig");
 
 const ZlsSpinnerProgress = struct {
     spinner: *zli.Spinner,
@@ -191,6 +192,7 @@ pub fn installZlsWithSpinner(
         },
     ) catch |err| {
         ctx.spinner.stop();
+        app.exit_code = exit_codes.zlsFailure(err);
         switch (err) {
             zvm.errors.ZlsError.ZlsVersionNotFound => {
                 try app.reporter.fail("No compatible ZLS release was found for Zig '{s}'.\n", .{zig_version});

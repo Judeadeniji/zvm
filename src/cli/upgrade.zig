@@ -5,6 +5,7 @@ const zli = @import("zli");
 const zvm = @import("zvm");
 const build_options = @import("build_options");
 const AppContext = @import("context.zig").AppContext;
+const exit_codes = @import("exit_codes.zig");
 
 const UpgradeProgress = struct {
     spinner: *zli.Spinner,
@@ -78,6 +79,7 @@ fn handle(ctx: zli.CommandContext) !void {
 
     if (check_only) {
         var info = zvm.self_updater.checkRelease(ctx.io, ctx.allocator, ctx.environ_map, target_tag, nightly) catch |err| {
+            app.exit_code = exit_codes.upgradeFailure(err);
             try reportUpgradeError(app, err);
             return error.Reported;
         };
@@ -109,6 +111,7 @@ fn handle(ctx: zli.CommandContext) !void {
         },
     }) catch |err| {
         ctx.spinner.stop();
+        app.exit_code = exit_codes.upgradeFailure(err);
         try reportUpgradeError(app, err);
         return error.Reported;
     };

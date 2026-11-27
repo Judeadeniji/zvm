@@ -172,7 +172,7 @@ Editor setup guides: [VS Code](docs/editors/vscode.md) · [Neovim](docs/editors/
 | `3` | The download from ziglang.org failed |
 | `4` | A SHA-256 checksum or Minisig signature did not verify |
 
-Other commands report failures with `1`.
+`zvm zls install` and `zvm upgrade` use the same statuses for their own downloads. Other commands report failures with `1`.
 
 ---
 

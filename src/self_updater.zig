@@ -223,10 +223,21 @@ pub fn needsUpgrade(current_version: []const u8, target_tag: []const u8) bool {
 }
 
 fn fetchGithubJson(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap, url: []const u8) ![]u8 {
-    return downloader.fetchUrlWithHeaders(io, allocator, environ_map, url, &.{
+    var status: std.http.Status = undefined;
+    const body = downloader.fetchUrlWithStatus(io, allocator, environ_map, url, &.{
         .{ .name = "User-Agent", .value = "zvm" },
         .{ .name = "Accept", .value = "application/vnd.github+json" },
-    });
+    }, &status) catch |err| return githubFetchError(status, err);
+    return body;
+}
+
+/// GitHub answers an unknown tag with 404, which is a wrong tag rather than a network
+/// problem; the caller words and scores the two differently.
+fn githubFetchError(status: std.http.Status, err: anyerror) anyerror {
+    if (err == DownloadError.HttpRequestFailed and status == .not_found) {
+        return UpgradeError.ReleaseNotFound;
+    }
+    return err;
 }
 
 /// Queries GitHub Releases for the target release asset without downloading the binary.
@@ -482,4 +493,21 @@ test "needsUpgrade compares semver and versioned nightly builds" {
     // An older target is not an upgrade; downgrading requires --force.
     try std.testing.expect(!needsUpgrade("0.2.0", "v0.1.0"));
     try std.testing.expect(!needsUpgrade("0.2.0", "0.2.0"));
+}
+
+test "githubFetchError turns a 404 into a missing release, not a network failure" {
+    try std.testing.expectEqual(
+        UpgradeError.ReleaseNotFound,
+        githubFetchError(.not_found, DownloadError.HttpRequestFailed),
+    );
+    // A reachable host that answers with an error is still a failed request.
+    try std.testing.expectEqual(
+        DownloadError.HttpRequestFailed,
+        githubFetchError(.internal_server_error, DownloadError.HttpRequestFailed),
+    );
+    // Transport errors never had a response, so they pass through untouched.
+    try std.testing.expectEqual(
+        error.ConnectionRefused,
+        githubFetchError(undefined, error.ConnectionRefused),
+    );
 }

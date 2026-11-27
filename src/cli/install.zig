@@ -3,9 +3,8 @@
 const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
-const context = @import("context.zig");
-const report = @import("report.zig");
-const AppContext = context.AppContext;
+const AppContext = @import("context.zig").AppContext;
+const exit_codes = @import("exit_codes.zig");
 const flags = @import("flags.zig");
 const zls_cmd = @import("zls.zig");
 
@@ -103,27 +102,6 @@ fn resolveProjectInstallVersion(app: *AppContext, ctx: zli.CommandContext) !?[]u
     }
 }
 
-/// Maps a download failure onto the status the process exits with, so a script can
-/// distinguish an unavailable release from a network fault from a failed verification
-/// without parsing the message. Unrecognized errors keep the generic status.
-fn installExitCode(err: anyerror) u8 {
-    const codes = context.ExitCode;
-    // A dead host arrives here unwrapped from the release-index fetch, so it is
-    // recognized by the same predicate that turns it into a message.
-    if (report.isNetworkError(err)) return codes.network;
-    return switch (err) {
-        zvm.errors.DownloadError.VersionNotFound, zvm.errors.DownloadError.TargetNotAvailable => codes.unavailable,
-        zvm.errors.DownloadError.HttpRequestFailed => codes.network,
-        zvm.errors.DownloadError.ChecksumMismatch,
-        zvm.errors.DownloadError.InvalidExpectedChecksum,
-        zvm.errors.MinisigError.SignatureVerificationFailed,
-        zvm.errors.MinisigError.GlobalSignatureVerificationFailed,
-        zvm.errors.MinisigError.KeyIdMismatch,
-        => codes.integrity,
-        else => 0,
-    };
-}
-
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
     var resolved_owned: ?[]u8 = null;
@@ -175,7 +153,7 @@ fn handle(ctx: zli.CommandContext) !void {
         },
     ) catch |err| {
         ctx.spinner.stop();
-        app.exit_code = installExitCode(err);
+        app.exit_code = exit_codes.installFailure(err);
         switch (err) {
             zvm.errors.DownloadError.VersionNotFound => {
                 try app.reporter.fail("Zig version '{s}' was not found in the release index.\n", .{canonical});
@@ -252,13 +230,3 @@ fn handle(ctx: zli.CommandContext) !void {
     }
 }
 
-test "installExitCode distinguishes unavailable, network, and integrity failures" {
-    try std.testing.expectEqual(context.ExitCode.unavailable, installExitCode(zvm.errors.DownloadError.VersionNotFound));
-    try std.testing.expectEqual(context.ExitCode.unavailable, installExitCode(zvm.errors.DownloadError.TargetNotAvailable));
-    try std.testing.expectEqual(context.ExitCode.network, installExitCode(zvm.errors.DownloadError.HttpRequestFailed));
-    try std.testing.expectEqual(context.ExitCode.integrity, installExitCode(zvm.errors.DownloadError.ChecksumMismatch));
-    try std.testing.expectEqual(context.ExitCode.integrity, installExitCode(zvm.errors.MinisigError.KeyIdMismatch));
-    try std.testing.expectEqual(context.ExitCode.network, installExitCode(error.ConnectionRefused));
-    // Anything else keeps the generic status rather than inventing one.
-    try std.testing.expectEqual(0, installExitCode(error.OutOfMemory));
-}

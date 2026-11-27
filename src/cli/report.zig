@@ -305,7 +305,7 @@ pub const Reporter = struct {
             },
             error.BrokenPipe, error.Canceled => {},
             else => if (isNetworkError(err)) {
-                try self.fail("Could not reach ziglang.org.\n", .{});
+                try self.fail("Could not reach the network.\n", .{});
                 try self.hint("Check your network connection and try again.\n", .{});
             } else {
                 try self.fail("Unexpected failure ({s}).\n", .{@errorName(err)});

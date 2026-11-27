@@ -44,7 +44,7 @@
   - `src/downloader.zig`: Release metadata fetching, downloading, SHA-256 integrity verification, and archive extraction.
   - `src/zls_downloader.zig`: ZLS release discovery (`releases.zigtools.org`), SHA-256 verification, and paired extraction.
   - `src/self_updater.zig`: GitHub Releases self-update discovery, SHA-256 verification, and atomic binary replacement.
-  - `src/cli/`: CLI subcommands are modularized into dedicated files (e.g., `src/cli/install.zig`, `src/cli/use.zig`, `src/cli/pin.zig`, `src/cli/list.zig`, `src/cli/setup.zig`, `src/cli/doctor.zig`, `src/cli/clean.zig`, `src/cli/config.zig`, `src/cli/env.zig`, `src/cli/completions.zig`, `src/cli/upgrade.zig`, `src/cli/zls.zig`), while `src/main.zig` and `src/cli/root.zig` wire the entrypoint and command tree.
+  - `src/cli/`: CLI subcommands are modularized into dedicated files (e.g., `src/cli/install.zig`, `src/cli/use.zig`, `src/cli/pin.zig`, `src/cli/list.zig`, `src/cli/setup.zig`, `src/cli/doctor.zig`, `src/cli/clean.zig`, `src/cli/config.zig`, `src/cli/env.zig`, `src/cli/completions.zig`, `src/cli/upgrade.zig`, `src/cli/zls.zig`), with `src/cli/exit_codes.zig` mapping reported failures onto process exit statuses, while `src/main.zig` and `src/cli/root.zig` wire the entrypoint and command tree.
 
 ## Zig 0.17.0 API & Idioms (from `.agents/skills/zig-0-17`)
 

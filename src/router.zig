@@ -22,6 +22,9 @@ pub const Router = struct {
     install_hook: ?*const fn (router: *const Router, version: []const u8) anyerror!void = null,
     /// The same seam for the ZLS paired install.
     zls_install_hook: ?*const fn (router: *const Router, zig_version: []const u8) anyerror!void = null,
+    /// Substitutes the final delegation, which cannot run inside a test process since it
+    /// replaces the image or exits. When set, the route functions return instead.
+    exec_hook: ?*const fn (router: *const Router, target_bin: []const u8, args: []const []const u8) anyerror!void = null,
 
     pub fn init(paths: *const Paths, io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) Router {
         return .{
@@ -208,11 +211,14 @@ pub const Router = struct {
 
     /// Resolves the required Zig version for `current_dir` and delegates execution to
     /// the target Zig compiler binary, forwarding all arguments and exit status.
+    ///
+    /// Returns only when `exec_hook` is installed; otherwise the process is replaced or
+    /// exited before this can return.
     pub fn routeAndExec(
         self: *const Router,
         current_dir: []const u8,
         passthrough_args: []const []const u8,
-    ) !noreturn {
+    ) !void {
         const target_version = self.resolveTargetVersion(current_dir) catch std.process.exit(1);
         defer self.allocator.free(target_version);
 
@@ -224,11 +230,14 @@ pub const Router = struct {
 
     /// Resolves the ZLS binary paired with the active Zig version (or `ZLS_PATH` / `zls-default`)
     /// and delegates execution transparently.
+    ///
+    /// Returns only when `exec_hook` is installed; otherwise the process is replaced or
+    /// exited before this can return.
     pub fn routeAndExecZls(
         self: *const Router,
         current_dir: []const u8,
         passthrough_args: []const []const u8,
-    ) !noreturn {
+    ) !void {
         if (self.environ_map) |env| {
             if (env.get("ZLS_PATH")) |zls_env| {
                 const trimmed = std.mem.trim(u8, zls_env, " \t\r\n");
@@ -308,7 +317,9 @@ pub const Router = struct {
         self: *const Router,
         target_bin: []const u8,
         passthrough_args: []const []const u8,
-    ) !noreturn {
+    ) !void {
+        if (self.exec_hook) |hook| return hook(self, target_bin, passthrough_args);
+
         var argv = try self.allocator.alloc([]const u8, passthrough_args.len + 1);
         defer self.allocator.free(argv);
 
@@ -379,6 +390,37 @@ const StubInstaller = struct {
     }
 };
 
+/// Records what the router would have delegated to instead of replacing the test
+/// process. Delegations are kept in order, because a hook returns where the real
+/// delegation would have ended the process.
+const ExecSpy = struct {
+    const max_calls = 4;
+
+    var calls: usize = 0;
+    var bin_bufs: [max_calls][Io.Dir.max_path_bytes]u8 = undefined;
+    var bin_lens: [max_calls]usize = @splat(0);
+    var seen: []const []const u8 = &.{};
+
+    fn exec(router: *const Router, target_bin: []const u8, args: []const []const u8) anyerror!void {
+        _ = router;
+        if (calls == max_calls) return error.TooManyDelegations;
+        bin_lens[calls] = @min(target_bin.len, bin_bufs[calls].len);
+        @memcpy(bin_bufs[calls][0..bin_lens[calls]], target_bin[0..bin_lens[calls]]);
+        calls += 1;
+        seen = args;
+    }
+
+    fn bin(index: usize) []const u8 {
+        return bin_bufs[index][0..bin_lens[index]];
+    }
+
+    fn reset() void {
+        calls = 0;
+        bin_lens = @splat(0);
+        seen = &.{};
+    }
+};
+
 /// Same idea as `StubInstaller`, for the ZLS paired install.
 const StubZlsInstaller = struct {
     var calls: usize = 0;
@@ -399,6 +441,118 @@ const StubZlsInstaller = struct {
         try Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zls" });
     }
 };
+
+test "routeAndExec delegates the resolved Zig binary with the flags forwarded" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    for ([_][]const u8{ "0.17.0", "0.18.0" }) |version| {
+        const dir = try paths.versionDir(allocator, version);
+        defer allocator.free(dir);
+        try cwd.createDirPath(io, dir);
+        const bin = try paths.versionZigBin(allocator, version);
+        defer allocator.free(bin);
+        try cwd.writeFile(io, .{ .sub_path = bin, .data = "zig" });
+    }
+
+    const pin_path = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(pin_path);
+    try cwd.writeFile(io, .{ .sub_path = pin_path, .data = "0.17.0\n" });
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+
+    var router = Router.init(&paths, io, allocator, &env);
+    router.exec_hook = &ExecSpy.exec;
+
+    ExecSpy.reset();
+    try router.routeAndExec(tmp_path, &.{ "build", "-Dopt=1" });
+    try std.testing.expectEqual(1, ExecSpy.calls);
+    try std.testing.expect(std.mem.endsWith(u8, ExecSpy.bin(0), "0.17.0" ++ std.fs.path.sep_str ++ "zig"));
+    try std.testing.expectEqual(2, ExecSpy.seen.len);
+    try std.testing.expectEqualStrings("build", ExecSpy.seen[0]);
+    try std.testing.expectEqualStrings("-Dopt=1", ExecSpy.seen[1]);
+
+    // The environment override outranks the project pin.
+    try env.put("ZIG_VERSION", "0.18.0");
+    ExecSpy.reset();
+    try router.routeAndExec(tmp_path, &.{});
+    try std.testing.expectEqual(1, ExecSpy.calls);
+    try std.testing.expect(std.mem.endsWith(u8, ExecSpy.bin(0), "0.18.0" ++ std.fs.path.sep_str ++ "zig"));
+    try std.testing.expectEqual(0, ExecSpy.seen.len);
+}
+
+test "routeAndExecZls honours ZLS_PATH and otherwise runs the paired install" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const zig_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(zig_dir);
+    try cwd.createDirPath(io, zig_dir);
+    const zig_bin = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(zig_bin);
+    try cwd.writeFile(io, .{ .sub_path = zig_bin, .data = "zig" });
+
+    const zls_dir = try paths.zlsVersionDir(allocator, "0.17.0");
+    defer allocator.free(zls_dir);
+    try cwd.createDirPath(io, zls_dir);
+    const zls_bin = try paths.zlsVersionBin(allocator, "0.17.0");
+    defer allocator.free(zls_bin);
+    try cwd.writeFile(io, .{ .sub_path = zls_bin, .data = "zls" });
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("ZIG_VERSION", "0.17.0");
+
+    var router = Router.init(&paths, io, allocator, &env);
+    router.exec_hook = &ExecSpy.exec;
+
+    // ZLS_PATH is delegated to first, with its whitespace trimmed. The hook returns
+    // where the real delegation would have replaced the image, so the paired ZLS is
+    // reached afterwards as well.
+    try env.put("ZLS_PATH", " /opt/custom/zls ");
+    ExecSpy.reset();
+    try router.routeAndExecZls(tmp_path, &.{"--version"});
+    try std.testing.expectEqual(2, ExecSpy.calls);
+    try std.testing.expectEqualStrings("/opt/custom/zls", ExecSpy.bin(0));
+    try std.testing.expectEqual(1, ExecSpy.seen.len);
+    try std.testing.expectEqualStrings("zls-versions", blk: {
+        const bin = ExecSpy.bin(1);
+        const start = std.mem.lastIndexOf(u8, bin, "zls-versions") orelse break :blk "missing";
+        break :blk bin[start .. start + "zls-versions".len];
+    });
+    try std.testing.expect(std.mem.endsWith(u8, ExecSpy.bin(1), "0.17.0" ++ std.fs.path.sep_str ++ "zls"));
+
+    // Without it, only the ZLS paired to the active Zig version runs.
+    try env.put("ZLS_PATH", "");
+    ExecSpy.reset();
+    try router.routeAndExecZls(tmp_path, &.{});
+    try std.testing.expectEqual(1, ExecSpy.calls);
+    try std.testing.expect(std.mem.indexOf(u8, ExecSpy.bin(0), "zls-versions") != null);
+    try std.testing.expect(std.mem.endsWith(u8, ExecSpy.bin(0), "0.17.0" ++ std.fs.path.sep_str ++ "zls"));
+}
 
 test "resolveZlsVersion auto-installs the paired ZLS or reports why it could not" {
     const allocator = std.testing.allocator;

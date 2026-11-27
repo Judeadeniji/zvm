@@ -185,6 +185,21 @@ pub fn fetchUrlWithHeaders(
     url: []const u8,
     extra_headers: []const std.http.Header,
 ) ![]u8 {
+    var status: std.http.Status = undefined;
+    return fetchUrlWithStatus(io, allocator, environ_map, url, extra_headers, &status);
+}
+
+/// Fetches an HTTP/HTTPS URL like `fetchUrlWithHeaders`, but also hands back the
+/// response status, so a caller that queries a REST API can tell a missing resource
+/// (404) from a transport failure.
+pub fn fetchUrlWithStatus(
+    io: Io,
+    allocator: Allocator,
+    environ_map: ?*const EnvironMap,
+    url: []const u8,
+    extra_headers: []const std.http.Header,
+    status: *std.http.Status,
+) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
 
@@ -199,6 +214,7 @@ pub fn fetchUrlWithHeaders(
         .extra_headers = extra_headers,
         .response_writer = &body.writer,
     });
+    status.* = res.status;
     if (res.status != .ok) {
         return DownloadError.HttpRequestFailed;
     }
@@ -360,7 +376,9 @@ const ProgressWriter = struct {
     bytes_written: u64 = 0,
     last_reported: u64 = 0,
 
-    const report_interval: u64 = 256 * 1024;
+    /// Coarse on purpose: reformatting the spinner on every write is wasted work on a
+    /// slow link, and `flush` reports the final count anyway.
+    const report_interval: u64 = 1024 * 1024;
 
     fn init(inner: *Io.Writer, total: ?u64, callback: ?ProgressCallback) ProgressWriter {
         return .{
@@ -1064,4 +1082,30 @@ test "parseMirrorList and buildMirrorTarballUrl handle community mirrors" {
         "https://pkg.hexops.org/zig/zig-linux-x86_64-0.17.0.tar.xz?source=zvm",
         url,
     );
+}
+
+test "downloadToFile reports an unreachable host and leaves no partial file" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const dir_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    const dest_path = try std.fs.path.join(allocator, &.{ dir_path, "zig.tar.xz" });
+    defer allocator.free(dest_path);
+
+    // Port 1 on the loopback interface refuses immediately, so the failure needs no
+    // server and no network.
+    const result = downloadToFile(io, allocator, null, "http://127.0.0.1:1/zig.tar.xz", dest_path, null, null);
+    try std.testing.expect(std.meta.isError(result));
+
+    // Neither the target nor a `.partial-*` scratch file survives the failure.
+    var dir = try Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
+    defer dir.close(io);
+    var it = dir.iterate();
+    var entries: usize = 0;
+    while (try it.next(io)) |_| entries += 1;
+    try std.testing.expectEqual(0, entries);
 }

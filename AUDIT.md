@@ -99,18 +99,26 @@ audit time. Commit hashes are from the fix series that followed the audit.
 - [x] **L** README overpromised signature verification — `README.md`
   - Now says the Minisign signature is checked "when upstream publishes one". `dd99dec`.
 
-- [ ] **L** `zvm pin` accepts a constraint no installed version satisfies
-  - Deliberate: a pin is a declaration that can be satisfied by a later install; the
-    command already reports that nothing matches locally.
+- [x] **M** A nonexistent `zvm upgrade` tag was reported as a network failure
+  - GitHub answers an unknown tag with 404, which `fetchUrlWithHeaders` collapsed into
+    `HttpRequestFailed`, so `zvm upgrade v99.9.9` printed "check your network" and
+    exited with the transport status. `fetchUrlWithStatus` now exposes the response
+    status, `fetchGithubJson` maps 404 to `ReleaseNotFound` (exit 2), and the generic
+    unreachable-host message no longer names ziglang.org for a GitHub query.
 
-- [ ] **L** Minisign non-prehashed verification reads the whole archive
-  - Not a defect: Ed25519 over a non-prehashed message needs the full message. Zig
-    publishes prehashed signatures, so the streaming path is the one in use.
+- [x] **L** `zvm pin` accepts a constraint no installed version satisfies
+  - Accepted as designed: a pin is a declaration that can be satisfied by a later
+    install, and the command already reports that nothing matches locally.
 
-- [ ] **L** `zvm current` exits 0 when the resolved version is not installed
-  - Deliberate: it is a query that successfully reports the resolution (including the
-    "not installed" state); `zvm which` and the shim fail because they must produce a
-    runnable binary.
+- [x] **L** Minisign non-prehashed verification reads the whole archive
+  - Closed as not a defect: Ed25519 over a non-prehashed message needs the full
+    message. Zig publishes prehashed signatures, so the streaming path is the one in
+    use.
+
+- [x] **L** `zvm current` exits 0 when the resolved version is not installed
+  - Accepted as designed: it is a query that successfully reports the resolution
+    (including the "not installed" state); `zvm which` and the shim fail because they
+    must produce a runnable binary.
 
 ---
 
@@ -201,8 +209,25 @@ audit time. Commit hashes are from the fix series that followed the audit.
   - `autoInstallAndWait` returns its error instead of a boolean, so the reason survives
     into the message: a manifest pinning `0.99.99` now exits with
     `Auto-install failed for Zig '0.99.99': VersionNotFound`.
-- [ ] Progress updates every 256 KiB reformat floats; a coarser interval would be
-      smoother on slow links (left as-is for responsiveness).
+- [x] Progress updates reformatted floats every 256 KiB. The interval is now 1 MiB,
+      which cuts the spinner work on slow links while `flush` still reports the final
+      count. `src/downloader.zig`.
+- [x] The final delegation of both route functions was untested, since a real `exec`
+      replaces or exits the test process. `Router.exec_hook` substitutes it, and the
+      tests now assert what each route delegates to: the project pin, the `ZIG_VERSION`
+      override winning over it, `ZLS_PATH` (trimmed) ahead of the paired ZLS, and the
+      paired ZLS itself. `execBinary` and the route functions return `void` accordingly;
+      in production the delegation still never returns.
+- [x] Download failures were only exercised by hand. `downloadToFile` now has a
+      server-free failure test: an unreachable host returns an error and leaves neither
+      the destination nor a `.partial-*` scratch file behind.
+- [x] Every reported failure exited `1`, so a script could not tell an unavailable
+      release from a dead network from a failed verification. `AppContext.exit_code`
+      carries a specific status for `error.Reported`, and `src/cli/exit_codes.zig` maps
+      failures for `zvm install` (`2` unavailable, `3` transport, `4` integrity), plus
+      the same vocabulary for `zvm zls install` and `zvm upgrade`. Documented in the
+      README. Live-verified: `install 0.99.99` -> `2`, a dead proxy -> `3`, a wrong
+      Minisig key -> `4`.
 
 ---
 
