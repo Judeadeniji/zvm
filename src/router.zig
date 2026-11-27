@@ -20,6 +20,8 @@ pub const Router = struct {
     /// Replaces the toolchain download in tests, which cannot fetch a real release.
     /// An error means the version is still missing, and its name is what gets reported.
     install_hook: ?*const fn (router: *const Router, version: []const u8) anyerror!void = null,
+    /// The same seam for the ZLS paired install.
+    zls_install_hook: ?*const fn (router: *const Router, zig_version: []const u8) anyerror!void = null,
 
     pub fn init(paths: *const Paths, io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) Router {
         return .{
@@ -110,6 +112,15 @@ pub const Router = struct {
 
     fn reportAutoInstallFailure(self: *const Router, version: []const u8, err: anyerror) void {
         printStderr(self.io, "error: Auto-install failed for Zig '{s}': {s}\n", .{ version, @errorName(err) });
+    }
+
+    /// Installs the ZLS paired with `zig_version`, returning the underlying failure for
+    /// the caller to report.
+    fn autoInstallZlsAndWait(self: *const Router, zig_version: []const u8) anyerror!void {
+        printStderr(self.io, "[zvm] Auto-installing ZLS for Zig {s}...\n", .{zig_version});
+        if (self.zls_install_hook) |hook| return hook(self, zig_version);
+        var res = try zls_downloader.installZls(self.paths, self.io, self.allocator, self.environ_map, zig_version, .{});
+        res.deinit(self.allocator);
     }
 
     /// Warns when a `build.zig.zon` in the resolved project does not parse. The
@@ -227,6 +238,22 @@ pub const Router = struct {
             }
         }
 
+        const chosen_version = self.resolveZlsVersion(current_dir) catch std.process.exit(1);
+        defer self.allocator.free(chosen_version);
+
+        const target_bin = try self.paths.zlsVersionBin(self.allocator, chosen_version);
+        defer self.allocator.free(target_bin);
+
+        try self.execBinary(target_bin, passthrough_args);
+    }
+
+    /// Resolves the Zig version whose ZLS should run for `current_dir` and makes sure that
+    /// ZLS is installed, auto-installing it when enabled.
+    ///
+    /// Like `resolveTargetVersion`, every failure is reported here and returned as
+    /// `error.Reported`, which keeps the auto-install path reachable without the final
+    /// `exec`.
+    fn resolveZlsVersion(self: *const Router, current_dir: []const u8) ![]u8 {
         const auto_install = isAutoInstallEnabled(self.paths, self.io, self.environ_map);
 
         const target_zig_version: []u8 = blk: {
@@ -236,7 +263,7 @@ pub const Router = struct {
                         break :blk zls_def;
                     }
                     printStderr(self.io, "error: No Zig or ZLS version configured.\nhint: Run 'zvm use <version>' and 'zvm zls install', or set ZLS_PATH.\n", .{});
-                    std.process.exit(1);
+                    return error.Reported;
                 }
                 if (err == ResolveError.NoCompatibleVersionInstalled) {
                     if (try resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir)) |min_ver| {
@@ -244,42 +271,37 @@ pub const Router = struct {
                     }
                 }
                 printStderr(self.io, "error: Failed to resolve Zig version for ZLS: {s}\n", .{@errorName(err)});
-                std.process.exit(1);
+                return error.Reported;
             };
             defer resolved.deinit(self.allocator);
-            warnMalformedManifest(self, resolved);
+            self.warnMalformedManifest(resolved);
             break :blk try self.allocator.dupe(u8, resolved.version);
         };
         defer self.allocator.free(target_zig_version);
 
         var chosen_version = try self.allocator.dupe(u8, target_zig_version);
-        defer self.allocator.free(chosen_version);
+        errdefer self.allocator.free(chosen_version);
 
         if (!self.paths.isZlsInstalled(self.io, chosen_version)) {
             if (auto_install) {
-                printStderr(self.io, "[zvm] Auto-installing ZLS for Zig {s}...\n", .{chosen_version});
-                var res = zls_downloader.installZls(self.paths, self.io, self.allocator, self.environ_map, chosen_version, .{}) catch |err| {
-                    printStderr(self.io, "error: Auto-install failed for ZLS (Zig '{s}'): {s}\n", .{ chosen_version, @errorName(err) });
-                    std.process.exit(1);
+                self.autoInstallZlsAndWait(chosen_version) catch |install_err| {
+                    printStderr(self.io, "error: Auto-install failed for ZLS (Zig '{s}'): {s}\n", .{ chosen_version, @errorName(install_err) });
+                    return error.Reported;
                 };
-                res.deinit(self.allocator);
             } else if (try self.paths.readZlsDefaultVersion(self.io, self.allocator)) |zls_def| {
                 self.allocator.free(chosen_version);
                 chosen_version = zls_def;
                 if (!self.paths.isZlsInstalled(self.io, chosen_version)) {
                     printStderr(self.io, "error: ZLS for Zig '{s}' is not installed.\nhint: Run 'zvm zls install {s}' to install it.\n", .{ target_zig_version, target_zig_version });
-                    std.process.exit(1);
+                    return error.Reported;
                 }
             } else {
                 printStderr(self.io, "error: ZLS for Zig '{s}' is not installed.\nhint: Run 'zvm zls install {s}' to install it.\n", .{ chosen_version, chosen_version });
-                std.process.exit(1);
+                return error.Reported;
             }
         }
 
-        const target_bin = try self.paths.zlsVersionBin(self.allocator, chosen_version);
-        defer self.allocator.free(target_bin);
-
-        try self.execBinary(target_bin, passthrough_args);
+        return chosen_version;
     }
 
     fn execBinary(
@@ -356,6 +378,98 @@ const StubInstaller = struct {
         try Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zig" });
     }
 };
+
+/// Same idea as `StubInstaller`, for the ZLS paired install.
+const StubZlsInstaller = struct {
+    var calls: usize = 0;
+    var last: ?[]const u8 = null;
+    var failure: ?anyerror = null;
+
+    fn install(router: *const Router, zig_version: []const u8) anyerror!void {
+        calls += 1;
+        last = zig_version;
+        if (failure) |err| return err;
+
+        const dir = try router.paths.zlsVersionDir(router.allocator, zig_version);
+        defer router.allocator.free(dir);
+        try Io.Dir.cwd().createDirPath(router.io, dir);
+
+        const bin = try router.paths.zlsVersionBin(router.allocator, zig_version);
+        defer router.allocator.free(bin);
+        try Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zls" });
+    }
+};
+
+test "resolveZlsVersion auto-installs the paired ZLS or reports why it could not" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    // Only 0.17.0 installed, while the manifest wants 0.19.0.
+    const v_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(v_dir);
+    try cwd.createDirPath(io, v_dir);
+    const zig_bin = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(zig_bin);
+    try cwd.writeFile(io, .{ .sub_path = zig_bin, .data = "zig" });
+
+    const zon_path = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_path);
+    try cwd.writeFile(io, .{
+        .sub_path = zon_path,
+        .data =
+        \\.{
+        \\    .name = .proj,
+        \\    .version = "0.0.0",
+        \\    .minimum_zig_version = "0.19.0",
+        \\    .dependencies = .{},
+        \\}
+        ,
+    });
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+
+    // Without the flag the missing ZLS is reported rather than downloaded.
+    var without_auto = Router.init(&paths, io, allocator, &env);
+    without_auto.zls_install_hook = &StubZlsInstaller.install;
+    StubZlsInstaller.calls = 0;
+    StubZlsInstaller.failure = null;
+    try std.testing.expectError(error.Reported, without_auto.resolveZlsVersion(tmp_path));
+    try std.testing.expectEqual(@as(usize, 0), StubZlsInstaller.calls);
+    try std.testing.expect(!paths.isZlsInstalled(io, "0.19.0"));
+
+    try env.put("ZVM_AUTO_INSTALL", "1");
+    var router = Router.init(&paths, io, allocator, &env);
+    router.zls_install_hook = &StubZlsInstaller.install;
+
+    // The installer's own failure is reported with its reason.
+    StubZlsInstaller.calls = 0;
+    StubZlsInstaller.failure = error.DownloadFailed;
+    try std.testing.expectError(error.Reported, router.resolveZlsVersion(tmp_path));
+    try std.testing.expectEqual(@as(usize, 1), StubZlsInstaller.calls);
+    try std.testing.expect(!paths.isZlsInstalled(io, "0.19.0"));
+
+    // A successful install is what the router then runs.
+    StubZlsInstaller.calls = 0;
+    StubZlsInstaller.failure = null;
+    const version = try router.resolveZlsVersion(tmp_path);
+    defer allocator.free(version);
+    try std.testing.expectEqualStrings("0.19.0", version);
+    try std.testing.expectEqualStrings("0.19.0", StubZlsInstaller.last.?);
+    try std.testing.expectEqual(@as(usize, 1), StubZlsInstaller.calls);
+    try std.testing.expect(paths.isZlsInstalled(io, "0.19.0"));
+}
 
 test "resolveTargetVersion auto-installs the minimum a project requires" {
     const allocator = std.testing.allocator;
