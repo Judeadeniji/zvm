@@ -11,6 +11,12 @@ const errors = @import("errors.zig");
 const PathError = errors.PathError;
 pub const PathInitError = errors.PathInitError;
 
+/// Formats `"<dir><sep><name><sep><exe>"` into `buf`. The installation checks below
+/// only need to know whether the file exists, so they must not allocate for it.
+fn formatBinPath(buf: []u8, dir: []const u8, name: []const u8, exe: []const u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s}{c}{s}{c}{s}", .{ dir, std.fs.path.sep, name, std.fs.path.sep, exe });
+}
+
 pub const Paths = struct {
     allocator: Allocator,
     base_dir: []const u8,
@@ -158,13 +164,7 @@ pub const Paths = struct {
     /// path with two joins allocated twice per call while no caller needs it.
     pub fn isVersionInstalled(self: *const Paths, io: Io, version: []const u8) bool {
         var buf: [Io.Dir.max_path_bytes]u8 = undefined;
-        const bin_path = std.fmt.bufPrint(&buf, "{s}{c}{s}{c}{s}", .{
-            self.versions_dir,
-            std.fs.path.sep,
-            version,
-            std.fs.path.sep,
-            zig_exe_name,
-        }) catch return false;
+        const bin_path = formatBinPath(&buf, self.versions_dir, version, zig_exe_name) catch return false;
         Io.Dir.cwd().access(io, bin_path, .{}) catch return false;
         return true;
     }
@@ -297,13 +297,7 @@ pub const Paths = struct {
     /// same reason as `isVersionInstalled`.
     pub fn isZlsInstalled(self: *const Paths, io: Io, zig_version: []const u8) bool {
         var buf: [Io.Dir.max_path_bytes]u8 = undefined;
-        const bin_path = std.fmt.bufPrint(&buf, "{s}{c}{s}{c}{s}", .{
-            self.zls_versions_dir,
-            std.fs.path.sep,
-            zig_version,
-            std.fs.path.sep,
-            zls_exe_name,
-        }) catch return false;
+        const bin_path = formatBinPath(&buf, self.zls_versions_dir, zig_version, zls_exe_name) catch return false;
         Io.Dir.cwd().access(io, bin_path, .{}) catch return false;
         return true;
     }
