@@ -338,6 +338,10 @@ pub fn upgradeSelf(
 
     try replaceSelfExecutable(io, allocator, self_exe, staged_bin);
 
+    // The archive was only needed until the binary was replaced. A failed delete must
+    // not fail an upgrade that already succeeded; `zvm clean` covers the leftover.
+    Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+
     const from_copy = try allocator.dupe(u8, options.current_version);
     errdefer allocator.free(from_copy);
     const tag_copy = try allocator.dupe(u8, info.tag_name);
