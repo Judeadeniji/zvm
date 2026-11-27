@@ -33,6 +33,7 @@
 
 - **Strict Separation of Concerns**: Do **not** jam everything into one or two files. Every module must have a single, cohesive responsibility.
 - **Modular Directory & File Structure**:
+  - `src/env_flags.zig`: Shared parsing of `ZVM_*` boolean environment flags (`ZVM_EXACT`, `ZVM_AUTO_INSTALL`) so every toggle accepts one vocabulary.
   - `src/errors.zig`: Centralized closed domain error sets (`PathError`, `VersionParseError`, `ConstraintParseError`, `ResolveError`, `ShimError`, `MinisigError`, `DownloadError`, `CliError`); return and match `<ErrorSet>.Member` instead of ad-hoc `error.<Member>` literals.
   - `src/paths.zig`: Manages the root ZVM directory structure (`~/.zvm/versions/`, `bin/`, `cache/`, `default`), environment overrides (`ZVM_PATH`, `XDG_DATA_HOME`), and path resolution.
   - `src/version.zig`: Represents versions (`SemVer`, `master`), version ordering, comparison, and constraint checking.

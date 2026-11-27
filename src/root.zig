@@ -4,6 +4,7 @@
 const std = @import("std");
 
 pub const errors = @import("errors.zig");
+pub const env_flags = @import("env_flags.zig");
 pub const paths = @import("paths.zig");
 pub const Paths = paths.Paths;
 

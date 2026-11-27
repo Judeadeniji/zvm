@@ -7,6 +7,7 @@ const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
 const errors = @import("errors.zig");
 const Paths = @import("paths.zig").Paths;
+const env_flags = @import("env_flags.zig");
 const version_mod = @import("version.zig");
 const Version = version_mod.Version;
 const Constraint = version_mod.Constraint;
@@ -59,25 +60,7 @@ pub const ResolveOptions = struct {
 
 fn exactEnabled(paths: *const Paths, io: Io, options: ResolveOptions, environ_map: ?*const EnvironMap) bool {
     if (options.exact) |exact| return exact;
-
-    if (environ_map) |env| {
-        if (env.get("ZVM_EXACT")) |raw| {
-            const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-            if (std.ascii.eqlIgnoreCase(trimmed, "1") or
-                std.ascii.eqlIgnoreCase(trimmed, "true") or
-                std.ascii.eqlIgnoreCase(trimmed, "yes"))
-            {
-                return true;
-            }
-            if (std.ascii.eqlIgnoreCase(trimmed, "0") or
-                std.ascii.eqlIgnoreCase(trimmed, "false") or
-                std.ascii.eqlIgnoreCase(trimmed, "no"))
-            {
-                return false;
-            }
-        }
-    }
-
+    if (env_flags.boolOverride(environ_map, "ZVM_EXACT")) |overridden| return overridden;
     return paths.isMarkerSet(io, "exact");
 }
 

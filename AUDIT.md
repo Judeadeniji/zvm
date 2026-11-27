@@ -174,9 +174,12 @@ audit time. Commit hashes are from the fix series that followed the audit.
       `"<dir>/<version>/<exe>"` into a stack buffer and `access` it: one syscall, no
       allocation. The `allocator` argument had no other use, so it is gone from the
       signatures and the ~20 call sites.
-- [ ] De-duplicate env-boolean parsing (`resolver.exactEnabled`,
-      `router.isAutoInstallEnabled`); `report.colorMode` and `config.ConfigAction` have
-      intentionally different vocabularies.
+- [x] `resolver.exactEnabled` and `router.isAutoInstallEnabled` each carried a copy of
+      the same trimming and case-insensitive `1/true/yes` and `0/false/no` matching.
+      Both now call `env_flags.boolOverride`, which also documents why an unrecognized
+      value falls through to the marker file instead of erroring.
+  - `report.colorMode` and `config.ConfigAction` are left alone: they accept their own
+    vocabularies (`auto`/`always`/`never`, subcommand-like words) on purpose.
 - [x] Dead code removed: `Constraint.parse`'s unused join buffer, `targetKey`'s discarded
       arch/OS strings. `94fa107`.
 - [x] `downloadToFile` no longer creates the destination before the response is known;

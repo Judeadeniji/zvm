@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvironMap = std.process.Environ.Map;
 const Paths = @import("paths.zig").Paths;
+const env_flags = @import("env_flags.zig");
 const resolver = @import("resolver.zig");
 const downloader = @import("downloader.zig");
 const zls_downloader = @import("zls_downloader.zig");
@@ -83,24 +84,7 @@ pub const Router = struct {
 
     /// Checks whether auto-install is enabled via `ZVM_AUTO_INSTALL` or `<base_dir>/auto-install`.
     pub fn isAutoInstallEnabled(paths: *const Paths, io: Io, environ_map: ?*const EnvironMap) bool {
-        if (environ_map) |env| {
-            if (env.get("ZVM_AUTO_INSTALL")) |raw| {
-                const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-                if (std.ascii.eqlIgnoreCase(trimmed, "1") or
-                    std.ascii.eqlIgnoreCase(trimmed, "true") or
-                    std.ascii.eqlIgnoreCase(trimmed, "yes"))
-                {
-                    return true;
-                }
-                if (std.ascii.eqlIgnoreCase(trimmed, "0") or
-                    std.ascii.eqlIgnoreCase(trimmed, "false") or
-                    std.ascii.eqlIgnoreCase(trimmed, "no"))
-                {
-                    return false;
-                }
-            }
-        }
-
+        if (env_flags.boolOverride(environ_map, "ZVM_AUTO_INSTALL")) |overridden| return overridden;
         return paths.isMarkerSet(io, "auto-install");
     }
 
