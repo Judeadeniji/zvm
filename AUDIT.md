@@ -256,11 +256,51 @@ audit time. Commit hashes are from the fix series that followed the audit.
 
 ---
 
-## Verified clean
+## Closure matrix
 
-Version ordering and constraint semantics (`^`, `~`, compound ranges, `master` supremacy);
-SHA-256 streaming verification; Minisign parsing and verification (key id, prehashed global
-signature); archive staging and extraction for tar.xz / tar.gz / zip including zip root-dir
-stripping; mirror URL construction (matches the live `community-mirrors.txt` format);
-`PATH` precedence detection; shim create/inspect/update incl. the Windows copy fallback;
-ANSI stripping across chunk boundaries; shim exit-code propagation (signal → 128+n).
+This replaces the prose "verified clean" claim: every cell is either a recorded command
+(live, temporary `ZVM_PATH` with a stub `0.14.0` install) or a covering test, and a cell
+nobody executed says so. A cell is only filled by a run, never by reading the code.
+
+Outcome columns: **ok** = success path, **bad** = invalid input, **missing** = the
+version/build does not exist, **net** = transport, **integ** = checksum/signature.
+
+| command | ok | bad | missing | net | integ |
+| --- | --- | --- | --- | --- | --- |
+| `install` | not exercised this round | `1` live (`not-a-version`) | `2` live (`0.99.99`) | `3` live (dead proxy) | `4` live (wrong Minisig key) |
+| `use` | not exercised this round | `1` live | `1` live (`9.9.9`) | n/a | n/a |
+| `pin` | `0` live (`0.14.0`) | `1` live (`not-a-version`); `1` with no argument | n/a | n/a | n/a |
+| `uninstall` | not exercised this round | `1` live | `1` live (`9.9.9`) | n/a | n/a |
+| `list` | `0` live | n/a | n/a | n/a | n/a |
+| `list-remote` | not exercised this round | n/a | n/a | not exercised this round | n/a |
+| `current` | `0` live (pinned, inherited) | `1` live (invalid `.zig-version`) | `0` live (prints "not installed") | n/a | n/a |
+| `which` | `0` live | `1` live (invalid `.zig-version`) | `1` live (unresolvable pin) | n/a | n/a |
+| `doctor` | `0` live | `0` live — see G1 | n/a | n/a | n/a |
+| `clean` | `0` live (`--dry-run`) | n/a | n/a | n/a | n/a |
+| `config` | not exercised this round (test: `ConfigAction.parse`) | n/a | n/a | n/a | n/a |
+| `env` | `0` live (`bash`) | not exercised this round | n/a | n/a | n/a |
+| `completions` | `0` live (`bash`) | not exercised this round | n/a | n/a | n/a |
+| `setup` | not exercised this round (test: `setupShim`) | n/a | n/a | n/a | n/a |
+| `zls list` | `0` live | n/a | n/a | n/a | n/a |
+| `zls install` | not exercised this round | n/a | `2` live (`0.99.99`) | test only (mapping) | test only |
+| `zls uninstall` | not exercised this round | not exercised this round | not exercised this round | n/a | n/a |
+| `upgrade` | `0` live (`--nightly`, SHA-256 verified) | n/a | `2` live (`v99.9.9`) | `3` live (`--check`, dead proxy); `429` → `3` by test | test only |
+| `zig` shim | `0` live; exit forwarded (`7` → `7`) | n/a | `1` live (unresolvable pin) | n/a | n/a |
+
+Covered by unit tests rather than a command (no live cell): version ordering and
+constraint semantics, SHA-256 streaming, Minisign parsing/verification, archive
+extraction for tar.xz / tar.gz / zip, mirror URL construction, `PATH` precedence, shim
+create/inspect/update, ANSI stripping, exit-code mapping for every domain error.
+
+### Gaps the matrix exposes (open, uncategorised)
+
+- **G1** `zvm doctor` exits `0` with failed checks (missing shim, `bin` not in `PATH`,
+  unresolved `.zig-version`). It is a report, so this may be intended, but a script
+  cannot gate on it and no flag provides a status.
+- **G2** Only `install`, `zls install`, and `upgrade` carry the specific statuses;
+  `use`/`uninstall`/`which` exit `1` for "not installed" where `2` would mean the same
+  thing. Documented in the README, but it is a vocabulary split, not a shared one.
+- **G3** `zls install` integrity (checksum mismatch) has a unit test only; the live path
+  was never exercised, unlike `install`'s exit `4`.
+- **G4** `list-remote`, `setup`, `config`, `env main`, `completions fish/zsh`, `use`
+  success, and both uninstall success paths have no cell filled this round.
