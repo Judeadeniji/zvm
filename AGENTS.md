@@ -25,9 +25,9 @@
 
 ## Toolchain & Command Usage
 
-- This project is dogfooded with `zvm` and pins `0.17.0` in `.zig-version`.
-- Use `zig` directly for all Zig-related commands (e.g., `zig build`, `zig build test`, `zig run`, `zig fmt`); the `zvm` shim in `~/.zvm/bin/zig` automatically resolves `.zig-version` to Zig 0.17.0.
-- Run `zvm doctor` if `zig version` does not report `0.17.0`.
+- The required Zig version is defined in `.zig-version` and `minimum_zig_version` in `build.zig.zon` (do not hardcode a version in commands or scripts).
+- Use `zig` directly for all Zig-related commands (e.g., `zig build`, `zig build test`, `zig run`, `zig fmt`); when `zvm` is configured (`zvm setup`), its `zig` shim resolves the project's version automatically across Linux, macOS, and Windows.
+- If the required Zig version is not installed yet, run `zvm install` (with no arguments, `zvm` auto-detects the version from `.zig-version` / `build.zig.zon`). Run `zvm doctor` to verify `zvm` shim and `PATH` configuration.
 - **Always Commit After Each Step**: Whenever a step or milestone is completed and verified, immediately commit the changes.
 
 ## Architectural Rules & Separation of Concerns

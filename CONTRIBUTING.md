@@ -28,11 +28,17 @@ Before contributing, please:
 
 ## Development Setup
 
-**Requirements**: Zig **0.17.0** (pinned in `.zig-version`; if you have `zvm` installed, `zvm install` and `zvm setup` will manage it automatically).
+**Requirements**: See [`.zig-version`](.zig-version) (and `minimum_zig_version` in [`build.zig.zon`](build.zig.zon)) for the required Zig version.
+
+If you already have `zvm` installed, it will auto-detect the required version for you on Linux, macOS, and Windows:
 
 ```bash
 git clone https://github.com/Judeadeniji/zvm.git
 cd zvm
+
+# Install the project's pinned Zig version (auto-detected) and configure shims
+zvm install
+zvm setup
 
 # Build
 zig build
@@ -47,7 +53,7 @@ zig fmt --check src/
 zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSafe
 ```
 
-> **Note**: Always use Zig 0.17.0. The project targets exactly this version. The CI matrix tests Linux, macOS, and Windows.
+> **Note**: Always build and test with the Zig version specified in `.zig-version` / `build.zig.zon`. If `zig version` does not match, run `zvm doctor` to check your shim and `PATH` setup (on Linux, macOS, or Windows). The CI matrix tests all three platforms.
 
 ---
 
