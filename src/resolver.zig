@@ -740,6 +740,81 @@ test "resolve hierarchy stops the walk at the repository root" {
     try std.testing.expectEqual(ResolutionSource.zig_version_file, from_repo.source);
 }
 
+test "resolve hierarchy treats a vendored repository as its own root" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    for ([_][]const u8{ "0.12.0", "0.13.0", "0.14.0" }) |ver| {
+        const v_dir = try paths.versionDir(allocator, ver);
+        defer allocator.free(v_dir);
+        try cwd.createDirPath(io, v_dir);
+
+        const bin_path = try paths.versionZigBin(allocator, ver);
+        defer allocator.free(bin_path);
+        try cwd.writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+    }
+    try paths.writeDefaultVersion(io, "0.14.0");
+
+    // A monorepo with its own repository root and pin.
+    const mono_dir = try std.fs.path.join(allocator, &.{ tmp_path, "mono" });
+    defer allocator.free(mono_dir);
+    const mono_git = try std.fs.path.join(allocator, &.{ mono_dir, ".git" });
+    defer allocator.free(mono_git);
+    try cwd.createDirPath(io, mono_git);
+    const mono_pin = try std.fs.path.join(allocator, &.{ mono_dir, ".zig-version" });
+    defer allocator.free(mono_pin);
+    try cwd.writeFile(io, .{ .sub_path = mono_pin, .data = "0.12.0\n" });
+
+    // A vendored checkout inside the monorepo, which is a repository of its own.
+    const dep_dir = try std.fs.path.join(allocator, &.{ mono_dir, "third_party", "dep" });
+    defer allocator.free(dep_dir);
+    const dep_git = try std.fs.path.join(allocator, &.{ dep_dir, ".git" });
+    defer allocator.free(dep_git);
+    try cwd.createDirPath(io, dep_git);
+    const dep_src = try std.fs.path.join(allocator, &.{ dep_dir, "src" });
+    defer allocator.free(dep_src);
+    try cwd.createDirPath(io, dep_src);
+
+    // The vendored checkout without a pin does not inherit the monorepo pin.
+    {
+        var resolved = try resolve(&paths, io, allocator, null, dep_src);
+        defer resolved.deinit(allocator);
+        try std.testing.expectEqualStrings("0.14.0", resolved.version);
+        try std.testing.expectEqual(ResolutionSource.global_default, resolved.source);
+    }
+
+    // Its own pin wins over the monorepo pin.
+    const dep_pin = try std.fs.path.join(allocator, &.{ dep_dir, ".zig-version" });
+    defer allocator.free(dep_pin);
+    try cwd.writeFile(io, .{ .sub_path = dep_pin, .data = "0.13.0\n" });
+    {
+        var resolved = try resolve(&paths, io, allocator, null, dep_src);
+        defer resolved.deinit(allocator);
+        try std.testing.expectEqualStrings("0.13.0", resolved.version);
+        try std.testing.expectEqual(ResolutionSource.zig_version_file, resolved.source);
+    }
+
+    // Code elsewhere in the monorepo still gets the monorepo pin.
+    const mono_src = try std.fs.path.join(allocator, &.{ mono_dir, "src" });
+    defer allocator.free(mono_src);
+    try cwd.createDirPath(io, mono_src);
+    var mono_resolved = try resolve(&paths, io, allocator, null, mono_src);
+    defer mono_resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.12.0", mono_resolved.version);
+    try std.testing.expectEqual(ResolutionSource.zig_version_file, mono_resolved.source);
+}
+
 test "findHighestMatchingInstalled ignores installed versions without a binary" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
