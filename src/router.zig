@@ -118,6 +118,17 @@ pub const Router = struct {
         );
     }
 
+    /// Version the router should auto-install for `current_dir`, or null when the
+    /// error is not one an install can fix or auto-install is disabled.
+    ///
+    /// Split out of `routeAndExec` so the branch can be exercised without actually
+    /// spawning an installer.
+    fn autoInstallCandidate(self: *const Router, current_dir: []const u8, err: anyerror) !?[]u8 {
+        if (err != ResolveError.NoCompatibleVersionInstalled) return null;
+        if (!isAutoInstallEnabled(self.paths, self.io, self.environ_map)) return null;
+        return resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir);
+    }
+
     /// Resolves the required Zig version for `current_dir` and delegates execution to
     /// the target Zig compiler binary, forwarding all arguments and exit status.
     pub fn routeAndExec(
@@ -129,12 +140,12 @@ pub const Router = struct {
 
         const target_version: []u8 = blk: {
             var resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
-                if (err == ResolveError.NoCompatibleVersionInstalled and auto_install) {
-                    if (try resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir)) |min_ver| {
-                        errdefer self.allocator.free(min_ver);
-                        if (!self.autoInstallAndWait(min_ver)) std.process.exit(1);
-                        break :blk min_ver;
+                if (try self.autoInstallCandidate(current_dir, err)) |min_ver| {
+                    if (!self.autoInstallAndWait(min_ver)) {
+                        self.allocator.free(min_ver);
+                        std.process.exit(1);
                     }
+                    break :blk min_ver;
                 }
                 switch (err) {
                     ResolveError.NoCompatibleVersionInstalled => {
@@ -297,6 +308,78 @@ test "termToExitCode and spawnAndWait propagation" {
 
         const fail_code = try Router.spawnAndWait(io, &.{ "/bin/sh", "-c", "exit 7" }, null);
         try std.testing.expectEqual(7, fail_code);
+    }
+}
+
+test "autoInstallCandidate picks the project minimum only when auto-install is on" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    // Only 0.17.0 installed, while the manifest wants 0.19.0.
+    const v_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(v_dir);
+    try cwd.createDirPath(io, v_dir);
+    const bin_path = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(bin_path);
+    try cwd.writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+
+    const zon_path = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_path);
+    try cwd.writeFile(io, .{
+        .sub_path = zon_path,
+        .data =
+        \\.{
+        \\    .name = .proj,
+        \\    .version = "0.0.0",
+        \\    .minimum_zig_version = "0.19.0",
+        \\    .dependencies = .{},
+        \\}
+        ,
+    });
+
+    // The premise of the branch: resolution fails because nothing satisfies the manifest.
+    try std.testing.expectError(
+        ResolveError.NoCompatibleVersionInstalled,
+        resolver.resolve(&paths, io, allocator, null, tmp_path),
+    );
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("ZVM_AUTO_INSTALL", "1");
+
+    var enabled = Router.init(&paths, io, allocator, &env);
+    {
+        const candidate = try enabled.autoInstallCandidate(tmp_path, ResolveError.NoCompatibleVersionInstalled);
+        defer if (candidate) |name| allocator.free(name);
+        try std.testing.expectEqualStrings("0.19.0", candidate.?);
+    }
+
+    // Without the flag the router reports the error instead of installing anything.
+    var disabled = Router.init(&paths, io, allocator, null);
+    try std.testing.expectEqual(
+        @as(?[]u8, null),
+        try disabled.autoInstallCandidate(tmp_path, ResolveError.NoCompatibleVersionInstalled),
+    );
+
+    // Resolve errors that an install cannot fix are never turned into a download.
+    const unfixable = [_]ResolveError{
+        ResolveError.NoVersionConfigured,
+        ResolveError.InvalidZigVersionConstraint,
+        ResolveError.UnmatchedZigVersionConstraint,
+    };
+    for (unfixable) |other| {
+        try std.testing.expectEqual(null, try enabled.autoInstallCandidate(tmp_path, other));
     }
 }
 
