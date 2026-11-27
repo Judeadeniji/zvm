@@ -25,8 +25,9 @@
 
 ## Toolchain & Command Usage
 
-- Always use `zig17` instead of `zig` for all Zig-related commands (e.g., `zig17 build`, `zig17 build test`, `zig17 run`, etc.).
-- Do **not** invoke the `zig` command directly; always use `zig17`.
+- This project is dogfooded with `zvm` and pins `0.17.0` in `.zig-version`.
+- Use `zig` directly for all Zig-related commands (e.g., `zig build`, `zig build test`, `zig run`, `zig fmt`); the `zvm` shim in `~/.zvm/bin/zig` automatically resolves `.zig-version` to Zig 0.17.0.
+- Run `zvm doctor` if `zig version` does not report `0.17.0`.
 - **Always Commit After Each Step**: Whenever a step or milestone is completed and verified, immediately commit the changes.
 
 ## Architectural Rules & Separation of Concerns

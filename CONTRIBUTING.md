@@ -28,7 +28,7 @@ Before contributing, please:
 
 ## Development Setup
 
-**Requirements**: Zig **0.17.0** (minimum).
+**Requirements**: Zig **0.17.0** (pinned in `.zig-version`; if you have `zvm` installed, `zvm install` and `zvm setup` will manage it automatically).
 
 ```bash
 git clone https://github.com/Judeadeniji/zvm.git
