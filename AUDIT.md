@@ -147,9 +147,21 @@ audit time. Commit hashes are from the fix series that followed the audit.
       upward open, which is not fewer syscalls. Making the walk materially faster
       would require a semantic change (stopping at the repository root) or a
       resolution cache with its own invalidation cost.
-- [ ] `Paths.listInstalledVersions` / `listInstalledZlsVersions`: `isVersionInstalled`
-      allocates two paths and calls `access` per entry although the directory is already
-      open; checking the `zig`/`zls` entry during iteration avoids that.
+- [x] The walk now stops at the repository root (nearest ancestor containing `.git`),
+      so a pin in an enclosing repository is not applied to a nested checkout.
+  - Measured (3000 resolutions, ReleaseFast, 20-level path with `.git` five levels
+    up): 549-556 ms before, 253-280 ms after, i.e. ~2.1x faster.
+  - Cost: the extra `.git` lookup is ~2.7 us per level when no repository root is
+    found, so the same full 20-level walk goes 555-586 ms -> 797-841 ms. That is
+    paid only by paths that never reach a repository root.
+  - `.git` may be a file (worktrees, submodules); `access` covers both.
+  - `d1e1da1`.
+- [x] `Paths.listInstalledVersions` / `listInstalledZlsVersions` checked the binary by
+      allocating two absolute paths (`versionDir` join + `versionZigBin` join) per entry.
+      Both now format `"<entry>/zig"` into a stack buffer and `access` it relative to the
+      already-open `versions` directory: one `access` syscall per entry, no per-entry
+      allocation beyond the returned name.
+  - `2b00bd7`.
 - [ ] De-duplicate env-boolean parsing (`resolver.exactEnabled`,
       `router.isAutoInstallEnabled`); `report.colorMode` and `config.ConfigAction` have
       intentionally different vocabularies.

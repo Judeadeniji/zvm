@@ -124,6 +124,8 @@ When you run `zig`, `zvm` checks in order:
 3. **`build.zig.zon`** (`minimum_zig_version`) in the current or any parent directory
 4. **Global default** set via `zvm use <version>`
 
+The parent-directory search stops at the repository root (the nearest directory containing `.git`), so a pin in an enclosing repository is never applied to a nested checkout or an unrelated directory below it.
+
 ### Exact `minimum_zig_version` mode
 
 By default, `build.zig.zon`'s `minimum_zig_version` means *"this version or newer"* — so `zvm` picks the newest installed Zig that satisfies it.

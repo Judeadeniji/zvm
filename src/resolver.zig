@@ -230,7 +230,8 @@ fn appendName(buf: []u8, dir: []const u8, name: []const u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, name }) catch null;
 }
 
-/// State for walking `start_dir` and its ancestors, one level at a time.
+/// State for walking `start_dir` and its ancestors, one level at a time, stopping
+/// at the repository root.
 ///
 /// The path lives in one owned buffer that a parent step only shortens, so a walk
 /// costs no allocations per level. Candidate files are still probed by full path:
@@ -254,6 +255,14 @@ const AncestorWalk = struct {
 
     fn path(self: *const AncestorWalk) []const u8 {
         return self.path_buf[0..self.path_len];
+    }
+
+    /// Whether the current level is a repository root. A `.zig-version` or manifest
+    /// above it belongs to an enclosing repository, not to this project.
+    fn isRepoRoot(self: *const AncestorWalk, io: Io, name_buf: []u8) bool {
+        const git_path = appendName(name_buf, self.path(), ".git") orelse return false;
+        Io.Dir.cwd().access(io, git_path, .{}) catch return false;
+        return true;
     }
 
     /// Moves to the parent directory. Returns false when the walk is over.
@@ -288,6 +297,7 @@ pub fn findProjectMinimumVersion(io: Io, allocator: Allocator, start_dir: []cons
             if (extracted.version) |min_str| return min_str;
         }
 
+        if (walk.isRepoRoot(io, &path_buf)) break;
         if (!walk.toParent()) break;
     }
 
@@ -477,6 +487,9 @@ fn resolveWalk(
             }
         }
 
+        // The repository root bounds the walk: a pin above it belongs to an
+        // enclosing project, and checking it here is the expensive part.
+        if (walk.isRepoRoot(io, &path_buf)) break;
         if (!walk.toParent()) break;
     }
 
@@ -637,6 +650,62 @@ test "resolve hierarchy .zig-version file" {
 
     try std.testing.expectEqualStrings("0.16.0", resolved.version);
     try std.testing.expectEqual(ResolutionSource.zig_version_file, resolved.source);
+}
+
+test "resolve hierarchy stops the walk at the repository root" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    for ([_][]const u8{ "0.12.0", "0.13.0" }) |ver| {
+        const v_dir = try paths.versionDir(allocator, ver);
+        defer allocator.free(v_dir);
+        try Io.Dir.cwd().createDirPath(io, v_dir);
+
+        const bin_path = try paths.versionZigBin(allocator, ver);
+        defer allocator.free(bin_path);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+    }
+    try paths.writeDefaultVersion(io, "0.13.0");
+
+    const repo_dir = try std.fs.path.join(allocator, &.{ tmp_path, "repo" });
+    defer allocator.free(repo_dir);
+    const project_dir = try std.fs.path.join(allocator, &.{ repo_dir, "sub", "deep" });
+    defer allocator.free(project_dir);
+    try Io.Dir.cwd().createDirPath(io, project_dir);
+
+    const git_dir = try std.fs.path.join(allocator, &.{ repo_dir, ".git" });
+    defer allocator.free(git_dir);
+    try Io.Dir.cwd().createDirPath(io, git_dir);
+
+    // A pin above the repository root belongs to an enclosing project.
+    const outer_pin = try std.fs.path.join(allocator, &.{ tmp_path, ".zig-version" });
+    defer allocator.free(outer_pin);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = outer_pin, .data = "0.12.0\n" });
+
+    var resolved = try resolve(&paths, io, allocator, null, project_dir);
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("0.13.0", resolved.version);
+    try std.testing.expectEqual(ResolutionSource.global_default, resolved.source);
+
+    // A pin at the repository root itself still applies.
+    const repo_pin = try std.fs.path.join(allocator, &.{ repo_dir, ".zig-version" });
+    defer allocator.free(repo_pin);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = repo_pin, .data = "0.12.0\n" });
+
+    var from_repo = try resolve(&paths, io, allocator, null, project_dir);
+    defer from_repo.deinit(allocator);
+    try std.testing.expectEqualStrings("0.12.0", from_repo.version);
+    try std.testing.expectEqual(ResolutionSource.zig_version_file, from_repo.source);
 }
 
 test "resolve hierarchy .zig-version semver constraint" {

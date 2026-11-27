@@ -13,6 +13,7 @@
   2. Ancestor directory walk-up:
      - `.zig-version` file (pinning an exact version, semver constraint, or `master`).
      - Project config: `build.zig.zon` honoring `minimum_zig_version` (resolves to the newest installed version satisfying the constraint).
+     - The walk stops at the repository root (nearest ancestor containing `.git`), so a pin above it is not applied to a nested checkout.
   3. Global default version (stored in user config, e.g. `~/.zvm/default` or `config.json`).
   4. If no compatible version is installed: provide a clear error message with an option/hint to install it (e.g., `zvm install <version>`).
 
