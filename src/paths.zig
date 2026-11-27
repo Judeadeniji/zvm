@@ -194,11 +194,14 @@ pub const Paths = struct {
             list.deinit(allocator);
         }
 
+        // Check the binary relative to the already-open directory: rebuilding two
+        // absolute paths per entry allocated on every installed version.
+        var bin_buf: [Io.Dir.max_path_bytes]u8 = undefined;
         var it = v_dir.iterate();
         while (try it.next(io)) |entry| {
-            if (self.isVersionInstalled(io, allocator, entry.name)) {
-                try list.append(allocator, try allocator.dupe(u8, entry.name));
-            }
+            const bin_rel = std.fmt.bufPrint(&bin_buf, "{s}{c}{s}", .{ entry.name, std.fs.path.sep, zig_exe_name }) catch continue;
+            v_dir.access(io, bin_rel, .{}) catch continue;
+            try list.append(allocator, try allocator.dupe(u8, entry.name));
         }
 
         return try list.toOwnedSlice(allocator);
@@ -309,11 +312,12 @@ pub const Paths = struct {
             list.deinit(allocator);
         }
 
+        var bin_buf: [Io.Dir.max_path_bytes]u8 = undefined;
         var it = v_dir.iterate();
         while (try it.next(io)) |entry| {
-            if (self.isZlsInstalled(io, allocator, entry.name)) {
-                try list.append(allocator, try allocator.dupe(u8, entry.name));
-            }
+            const bin_rel = std.fmt.bufPrint(&bin_buf, "{s}{c}{s}", .{ entry.name, std.fs.path.sep, zls_exe_name }) catch continue;
+            v_dir.access(io, bin_rel, .{}) catch continue;
+            try list.append(allocator, try allocator.dupe(u8, entry.name));
         }
 
         return try list.toOwnedSlice(allocator);
@@ -451,6 +455,38 @@ test "Paths read and write default version" {
     try paths.clearDefaultVersion(io);
     const cleared = try paths.readDefaultVersion(io, allocator);
     try std.testing.expectEqual(@as(?[]u8, null), cleared);
+}
+
+test "listInstalledVersions skips directories without a zig binary" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp_dir.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const installed_dir = try paths.versionDir(allocator, "0.17.0");
+    defer allocator.free(installed_dir);
+    try Io.Dir.cwd().createDirPath(io, installed_dir);
+
+    const bin_path = try paths.versionZigBin(allocator, "0.17.0");
+    defer allocator.free(bin_path);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = bin_path, .data = "zig" });
+
+    const empty_dir = try paths.versionDir(allocator, "0.12.0");
+    defer allocator.free(empty_dir);
+    try Io.Dir.cwd().createDirPath(io, empty_dir);
+
+    const versions = try paths.listInstalledVersions(io, allocator);
+    defer Paths.freeInstalledVersions(allocator, versions);
+
+    try std.testing.expectEqual(@as(usize, 1), versions.len);
+    try std.testing.expectEqualStrings("0.17.0", versions[0]);
 }
 
 test "resolveBaseDirForOs platform discovery" {
