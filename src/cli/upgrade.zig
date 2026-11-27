@@ -17,6 +17,12 @@ const UpgradeProgress = struct {
             if (t > 0) {
                 const total_mb = @as(f64, @floatFromInt(t)) / (1024.0 * 1024.0);
                 const pct = @min(@as(u64, 100), (downloaded * 100) / t);
+                // The body is complete at 100%, so the remaining work (the digest, the
+                // extract, the swap) belongs to a different message than the download.
+                if (pct == 100) {
+                    self.spinner.updateMessage("Verifying and installing zvm...", .{}) catch {};
+                    return;
+                }
                 self.spinner.updateMessage("Downloading zvm ({d:.1} / {d:.1} MB, {d}%)...", .{
                     dl_mb,
                     total_mb,
@@ -139,6 +145,14 @@ fn reportUpgradeError(app: *AppContext, err: anyerror) !void {
         },
         zvm.errors.DownloadError.ChecksumMismatch => {
             try app.reporter.fail("SHA-256 checksum verification failed for the downloaded zvm archive.\n", .{});
+        },
+        zvm.errors.UpgradeError.RateLimited => {
+            try app.reporter.fail("GitHub is rate-limiting zvm's requests (HTTP 429).\n", .{});
+            try app.reporter.hint("Wait a few minutes and run 'zvm upgrade' again.\n", .{});
+        },
+        zvm.errors.UpgradeError.ChecksumManifestUnavailable => {
+            try app.reporter.fail("Downloaded the zvm archive but could not fetch its SHA256SUMS.txt.\n", .{});
+            try app.reporter.hint("Nothing was installed; run 'zvm upgrade' again to retry.\n", .{});
         },
         zvm.errors.DownloadError.HttpRequestFailed => {
             try app.reporter.fail("Failed to query GitHub Releases for zvm.\n", .{});

@@ -232,12 +232,25 @@ fn fetchGithubJson(io: Io, allocator: Allocator, environ_map: ?*const EnvironMap
 }
 
 /// GitHub answers an unknown tag with 404, which is a wrong tag rather than a network
-/// problem; the caller words and scores the two differently.
+/// problem, and throttling with 429, which is retryable; the caller words and scores
+/// all three differently.
 fn githubFetchError(status: std.http.Status, err: anyerror) anyerror {
-    if (err == DownloadError.HttpRequestFailed and status == .not_found) {
-        return UpgradeError.ReleaseNotFound;
-    }
-    return err;
+    if (err != DownloadError.HttpRequestFailed) return err;
+    return switch (status) {
+        .not_found => UpgradeError.ReleaseNotFound,
+        .too_many_requests => UpgradeError.RateLimited,
+        else => err,
+    };
+}
+
+/// Classifies a failed `SHA256SUMS.txt` fetch. The archive itself downloaded fine, so
+/// this is not the release query failing; outside throttling the distinction is only
+/// that the digest is missing.
+fn manifestFetchFailure(err: anyerror) anyerror {
+    return switch (err) {
+        UpgradeError.RateLimited => err,
+        else => UpgradeError.ChecksumManifestUnavailable,
+    };
 }
 
 /// Queries GitHub Releases for the target release asset without downloading the binary.
@@ -321,7 +334,12 @@ pub fn upgradeSelf(
 
     var checksum_verified = false;
     if (info.sha256sums_url) |sums_url| {
-        const sums_bytes = try fetchGithubJson(io, allocator, environ_map, sums_url);
+        const sums_bytes = fetchGithubJson(io, allocator, environ_map, sums_url) catch |err| {
+            // Without the digest the archive cannot be used, and a retry downloads it
+            // again, so it is not left behind in the cache.
+            Io.Dir.cwd().deleteFile(io, cache_path) catch {};
+            return manifestFetchFailure(err);
+        };
         defer allocator.free(sums_bytes);
 
         const digest = parseSha256Sums(sums_bytes, info.asset_name) orelse return UpgradeError.ChecksumNotFound;
@@ -504,6 +522,20 @@ test "githubFetchError turns a 404 into a missing release, not a network failure
     try std.testing.expectEqual(
         DownloadError.HttpRequestFailed,
         githubFetchError(.internal_server_error, DownloadError.HttpRequestFailed),
+    );
+    // Throttling is its own failure, because retrying is the fix.
+    try std.testing.expectEqual(
+        UpgradeError.RateLimited,
+        githubFetchError(.too_many_requests, DownloadError.HttpRequestFailed),
+    );
+    // The checksum manifest is a separate step from the release query.
+    try std.testing.expectEqual(
+        UpgradeError.ChecksumManifestUnavailable,
+        manifestFetchFailure(DownloadError.HttpRequestFailed),
+    );
+    try std.testing.expectEqual(
+        UpgradeError.RateLimited,
+        manifestFetchFailure(UpgradeError.RateLimited),
     );
     // Transport errors never had a response, so they pass through untouched.
     try std.testing.expectEqual(

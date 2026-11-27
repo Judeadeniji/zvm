@@ -106,6 +106,23 @@ audit time. Commit hashes are from the fix series that followed the audit.
     status, `fetchGithubJson` maps 404 to `ReleaseNotFound` (exit 2), and the generic
     unreachable-host message no longer names ziglang.org for a GitHub query.
 
+- [x] **M** `zvm upgrade --nightly` blamed the network when the checksum manifest failed
+  - The archive download (3.4 MB on this machine) reached 100%, then the `SHA256SUMS.txt`
+    fetch failed with any non-200 and was reported as "Failed to query GitHub Releases",
+    which names the wrong request and reads like a corrupted download.
+  - Non-200s now keep their meaning: 404 is `ReleaseNotFound`, 429 is `RateLimited`
+    (message says to retry, since that is the fix), and a manifest fetch that fails for
+    any other reason is `ChecksumManifestUnavailable` ("Downloaded the zvm archive but
+    could not fetch its SHA256SUMS.txt"). The archive is deleted in that case: without a
+    digest it cannot be used, and a retry downloads it again anyway.
+  - The progress message switches to "Verifying and installing zvm..." at 100% instead of
+    sitting on the download percentage while a different request runs.
+  - Reproduced as a transient upstream failure: the same command succeeded on the next
+    run, so the throttled/blocked status itself is gone. The reporting half is covered by
+    `githubFetchError` / `manifestFetchFailure` / `upgradeFailure` tests; the exact live
+    manifest failure was not re-triggered, because blocking one host's path needs a TLS
+    intercepting proxy.
+
 - [x] **L** `zvm pin` accepts a constraint no installed version satisfies
   - Accepted as designed: a pin is a declaration that can be satisfied by a later
     install, and the command already reports that nothing matches locally.

@@ -56,6 +56,12 @@ pub fn upgradeFailure(err: anyerror) u8 {
         zvm.errors.UpgradeError.ChecksumNotFound,
         => ExitCode.unavailable,
 
+        // Throttling and a missing digest are both worth retrying, so they share the
+        // transport status rather than looking like a bad release.
+        zvm.errors.UpgradeError.RateLimited,
+        zvm.errors.UpgradeError.ChecksumManifestUnavailable,
+        => ExitCode.network,
+
         zvm.errors.DownloadError.ChecksumMismatch,
         zvm.errors.DownloadError.InvalidExpectedChecksum,
         => ExitCode.integrity,
@@ -90,6 +96,8 @@ test "zlsFailure and upgradeFailure use the same vocabulary" {
 
     try std.testing.expectEqual(ExitCode.unavailable, upgradeFailure(zvm.errors.UpgradeError.ReleaseNotFound));
     try std.testing.expectEqual(ExitCode.unavailable, upgradeFailure(zvm.errors.UpgradeError.ChecksumNotFound));
+    try std.testing.expectEqual(ExitCode.network, upgradeFailure(zvm.errors.UpgradeError.RateLimited));
+    try std.testing.expectEqual(ExitCode.network, upgradeFailure(zvm.errors.UpgradeError.ChecksumManifestUnavailable));
     try std.testing.expectEqual(ExitCode.network, upgradeFailure(zvm.errors.DownloadError.HttpRequestFailed));
     try std.testing.expectEqual(ExitCode.integrity, upgradeFailure(zvm.errors.DownloadError.ChecksumMismatch));
     try std.testing.expectEqual(0, upgradeFailure(zvm.errors.UpgradeError.ExecutableReplaceFailed));

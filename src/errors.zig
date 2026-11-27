@@ -100,6 +100,12 @@ pub const UpgradeError = error{
     InvalidReleaseMetadata,
     ChecksumNotFound,
     ExecutableReplaceFailed,
+    /// GitHub answered 429: the request was refused for being too frequent, which is
+    /// worth retrying and is not the same as an unreachable host.
+    RateLimited,
+    /// The archive downloaded, but its `SHA256SUMS.txt` could not be fetched, so there
+    /// was no digest to verify against and nothing was installed.
+    ChecksumManifestUnavailable,
 };
 
 /// Combined domain error set across all `zvm` subsystems.
