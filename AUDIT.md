@@ -184,8 +184,13 @@ audit time. Commit hashes are from the fix series that followed the audit.
       arch/OS strings. `94fa107`.
 - [x] `downloadToFile` no longer creates the destination before the response is known;
       it writes a temp file and renames. `3e80173`.
-- [ ] `self_updater.upgradeSelf` never removes the downloaded archive from `cache/`
-      (covered by `zvm clean`).
+- [x] `self_updater.upgradeSelf` never removed the downloaded archive from `cache/`,
+      so every upgrade left a release tarball behind until some later `zvm clean`. It
+      is deleted after the atomic replacement, best-effort so a failed delete cannot
+      turn a completed upgrade into an error.
+  - Tests: the flag vocabulary that the resolver and router actually consume (padded,
+    upper-case, unrecognized values falling back to the marker) is now covered, not
+    just the `1`/`false` spellings.
 - [ ] Progress updates every 256 KiB reformat floats; a coarser interval would be
       smoother on slow links (left as-is for responsiveness).
 
