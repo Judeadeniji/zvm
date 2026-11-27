@@ -18,8 +18,8 @@ pub const Router = struct {
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
     /// Replaces the toolchain download in tests, which cannot fetch a real release.
-    /// Returns whether the version is now installed.
-    install_hook: ?*const fn (router: *const Router, version: []const u8) bool = null,
+    /// An error means the version is still missing, and its name is what gets reported.
+    install_hook: ?*const fn (router: *const Router, version: []const u8) anyerror!void = null,
 
     pub fn init(paths: *const Paths, io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) Router {
         return .{
@@ -99,15 +99,17 @@ pub const Router = struct {
         w.flush() catch {};
     }
 
-    fn autoInstallAndWait(self: *const Router, version: []const u8) bool {
+    /// Installs `version`, returning the underlying failure instead of a bare `false` so
+    /// the caller can report why the install did not happen.
+    fn autoInstallAndWait(self: *const Router, version: []const u8) anyerror!void {
         printStderr(self.io, "[zvm] Auto-installing Zig {s}...\n", .{version});
         if (self.install_hook) |hook| return hook(self, version);
-        var res = downloader.installVersion(self.paths, self.io, self.allocator, self.environ_map, version, .{}) catch |err| {
-            printStderr(self.io, "error: Auto-install failed for Zig '{s}': {s}\n", .{ version, @errorName(err) });
-            return false;
-        };
+        var res = try downloader.installVersion(self.paths, self.io, self.allocator, self.environ_map, version, .{});
         res.deinit(self.allocator);
-        return true;
+    }
+
+    fn reportAutoInstallFailure(self: *const Router, version: []const u8, err: anyerror) void {
+        printStderr(self.io, "error: Auto-install failed for Zig '{s}': {s}\n", .{ version, @errorName(err) });
     }
 
     /// Warns when a `build.zig.zon` in the resolved project does not parse. The
@@ -145,10 +147,11 @@ pub const Router = struct {
         const target_version: []u8 = blk: {
             var resolved = resolver.resolve(self.paths, self.io, self.allocator, self.environ_map, current_dir) catch |err| {
                 if (try self.autoInstallCandidate(current_dir, err)) |min_ver| {
-                    if (!self.autoInstallAndWait(min_ver)) {
+                    self.autoInstallAndWait(min_ver) catch |install_err| {
+                        self.reportAutoInstallFailure(min_ver, install_err);
                         self.allocator.free(min_ver);
                         return error.Reported;
-                    }
+                    };
                     break :blk min_ver;
                 }
                 switch (err) {
@@ -183,7 +186,10 @@ pub const Router = struct {
                 printStderr(self.io, "error: Zig version '{s}' is not installed.\nhint: Run 'zvm install {s}' to install it.\n", .{ target_version, target_version });
                 return error.Reported;
             }
-            if (!self.autoInstallAndWait(target_version)) return error.Reported;
+            self.autoInstallAndWait(target_version) catch |install_err| {
+                self.reportAutoInstallFailure(target_version, install_err);
+                return error.Reported;
+            };
         }
 
         return target_version;
@@ -334,21 +340,20 @@ test "termToExitCode and spawnAndWait propagation" {
 const StubInstaller = struct {
     var calls: usize = 0;
     var last: ?[]const u8 = null;
-    var succeed: bool = true;
+    var failure: ?anyerror = null;
 
-    fn install(router: *const Router, version: []const u8) bool {
+    fn install(router: *const Router, version: []const u8) anyerror!void {
         calls += 1;
         last = version;
-        if (!succeed) return false;
+        if (failure) |err| return err;
 
-        const dir = router.paths.versionDir(router.allocator, version) catch return false;
+        const dir = try router.paths.versionDir(router.allocator, version);
         defer router.allocator.free(dir);
-        Io.Dir.cwd().createDirPath(router.io, dir) catch return false;
+        try Io.Dir.cwd().createDirPath(router.io, dir);
 
-        const bin = router.paths.versionZigBin(router.allocator, version) catch return false;
+        const bin = try router.paths.versionZigBin(router.allocator, version);
         defer router.allocator.free(bin);
-        Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zig" }) catch return false;
-        return true;
+        try Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zig" });
     }
 };
 
@@ -390,14 +395,14 @@ test "resolveTargetVersion auto-installs the minimum a project requires" {
 
     // A failed install is reported to the caller, which turns it into an exit status.
     StubInstaller.calls = 0;
-    StubInstaller.succeed = false;
+    StubInstaller.failure = error.DownloadFailed;
     try std.testing.expectError(error.Reported, router.resolveTargetVersion(tmp_path));
     try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
     try std.testing.expect(!paths.isVersionInstalled(io, "0.19.0"));
 
     // A successful one is what the router then runs.
     StubInstaller.calls = 0;
-    StubInstaller.succeed = true;
+    StubInstaller.failure = null;
     const version = try router.resolveTargetVersion(tmp_path);
     defer allocator.free(version);
     try std.testing.expectEqualStrings("0.19.0", version);
@@ -450,7 +455,7 @@ test "resolveTargetVersion installs an exact pin that is missing and refuses wit
     var router = Router.init(&paths, io, allocator, &env);
     router.install_hook = &StubInstaller.install;
     StubInstaller.calls = 0;
-    StubInstaller.succeed = true;
+    StubInstaller.failure = null;
 
     const version = try router.resolveTargetVersion(tmp_path);
     defer allocator.free(version);

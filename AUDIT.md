@@ -198,6 +198,9 @@ audit time. Commit hashes are from the fix series that followed the audit.
       tests while staying null in production. Covered: a project minimum nothing
       satisfies, an exact pin that resolves but is not installed (with and without the
       flag), and a failed install reporting through the exit status.
+  - `autoInstallAndWait` returns its error instead of a boolean, so the reason survives
+    into the message: a manifest pinning `0.99.99` now exits with
+    `Auto-install failed for Zig '0.99.99': VersionNotFound`.
 - [ ] Progress updates every 256 KiB reformat floats; a coarser interval would be
       smoother on slow links (left as-is for responsiveness).
 
