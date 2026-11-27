@@ -192,6 +192,12 @@ audit time. Commit hashes are from the fix series that followed the audit.
       is deleted after the atomic replacement, best-effort so a failed delete cannot
       turn a completed upgrade into an error. Verified against the real `v0.1.0`
       release: after a successful upgrade `cache/` is empty.
+- [x] The enabled auto-install path had no coverage: exercising it meant fetching a
+      real toolchain and `exec`-ing it. The resolve-and-ensure step is now
+      `Router.resolveTargetVersion`, and `Router.install_hook` replaces the download in
+      tests while staying null in production. Covered: a project minimum nothing
+      satisfies, an exact pin that resolves but is not installed (with and without the
+      flag), and a failed install reporting through the exit status.
 - [ ] Progress updates every 256 KiB reformat floats; a coarser interval would be
       smoother on slow links (left as-is for responsiveness).
 

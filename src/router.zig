@@ -17,6 +17,9 @@ pub const Router = struct {
     io: Io,
     allocator: Allocator,
     environ_map: ?*const EnvironMap,
+    /// Replaces the toolchain download in tests, which cannot fetch a real release.
+    /// Returns whether the version is now installed.
+    install_hook: ?*const fn (router: *const Router, version: []const u8) bool = null,
 
     pub fn init(paths: *const Paths, io: Io, allocator: Allocator, environ_map: ?*const EnvironMap) Router {
         return .{
@@ -98,6 +101,7 @@ pub const Router = struct {
 
     fn autoInstallAndWait(self: *const Router, version: []const u8) bool {
         printStderr(self.io, "[zvm] Auto-installing Zig {s}...\n", .{version});
+        if (self.install_hook) |hook| return hook(self, version);
         var res = downloader.installVersion(self.paths, self.io, self.allocator, self.environ_map, version, .{}) catch |err| {
             printStderr(self.io, "error: Auto-install failed for Zig '{s}': {s}\n", .{ version, @errorName(err) });
             return false;
@@ -129,13 +133,13 @@ pub const Router = struct {
         return resolver.findProjectMinimumVersion(self.io, self.allocator, current_dir);
     }
 
-    /// Resolves the required Zig version for `current_dir` and delegates execution to
-    /// the target Zig compiler binary, forwarding all arguments and exit status.
-    pub fn routeAndExec(
-        self: *const Router,
-        current_dir: []const u8,
-        passthrough_args: []const []const u8,
-    ) !noreturn {
+    /// Resolves the Zig version to run for `current_dir`, auto-installing it when a
+    /// project manifest requires a version that is not installed.
+    ///
+    /// Every failure is reported here and returned as `error.Reported`, so the caller
+    /// only turns it into an exit status. Split from `routeAndExec` so the auto-install
+    /// path can be exercised without the final `exec`.
+    fn resolveTargetVersion(self: *const Router, current_dir: []const u8) ![]u8 {
         const auto_install = isAutoInstallEnabled(self.paths, self.io, self.environ_map);
 
         const target_version: []u8 = blk: {
@@ -143,7 +147,7 @@ pub const Router = struct {
                 if (try self.autoInstallCandidate(current_dir, err)) |min_ver| {
                     if (!self.autoInstallAndWait(min_ver)) {
                         self.allocator.free(min_ver);
-                        std.process.exit(1);
+                        return error.Reported;
                     }
                     break :blk min_ver;
                 }
@@ -164,22 +168,36 @@ pub const Router = struct {
                         printStderr(self.io, "error: Failed to resolve Zig version: {s}\n", .{@errorName(err)});
                     },
                 }
-                std.process.exit(1);
+                return error.Reported;
             };
             defer resolved.deinit(self.allocator);
-            warnMalformedManifest(self, resolved);
+            self.warnMalformedManifest(resolved);
             break :blk try self.allocator.dupe(u8, resolved.version);
         };
-        defer self.allocator.free(target_version);
+        errdefer self.allocator.free(target_version);
 
+        // A resolved version can still be missing locally (an exact manifest pin, for
+        // example), so that case gets its own install attempt.
         if (!self.paths.isVersionInstalled(self.io, target_version)) {
-            if (!auto_install or !self.autoInstallAndWait(target_version)) {
-                if (!auto_install) {
-                    printStderr(self.io, "error: Zig version '{s}' is not installed.\nhint: Run 'zvm install {s}' to install it.\n", .{ target_version, target_version });
-                }
-                std.process.exit(1);
+            if (!auto_install) {
+                printStderr(self.io, "error: Zig version '{s}' is not installed.\nhint: Run 'zvm install {s}' to install it.\n", .{ target_version, target_version });
+                return error.Reported;
             }
+            if (!self.autoInstallAndWait(target_version)) return error.Reported;
         }
+
+        return target_version;
+    }
+
+    /// Resolves the required Zig version for `current_dir` and delegates execution to
+    /// the target Zig compiler binary, forwarding all arguments and exit status.
+    pub fn routeAndExec(
+        self: *const Router,
+        current_dir: []const u8,
+        passthrough_args: []const []const u8,
+    ) !noreturn {
+        const target_version = self.resolveTargetVersion(current_dir) catch std.process.exit(1);
+        defer self.allocator.free(target_version);
 
         const target_bin = try self.paths.versionZigBin(self.allocator, target_version);
         defer self.allocator.free(target_bin);
@@ -309,6 +327,136 @@ test "termToExitCode and spawnAndWait propagation" {
         const fail_code = try Router.spawnAndWait(io, &.{ "/bin/sh", "-c", "exit 7" }, null);
         try std.testing.expectEqual(7, fail_code);
     }
+}
+
+/// Stands in for `downloader.installVersion`: records the request and materialises the
+/// binary the real installer would have placed.
+const StubInstaller = struct {
+    var calls: usize = 0;
+    var last: ?[]const u8 = null;
+    var succeed: bool = true;
+
+    fn install(router: *const Router, version: []const u8) bool {
+        calls += 1;
+        last = version;
+        if (!succeed) return false;
+
+        const dir = router.paths.versionDir(router.allocator, version) catch return false;
+        defer router.allocator.free(dir);
+        Io.Dir.cwd().createDirPath(router.io, dir) catch return false;
+
+        const bin = router.paths.versionZigBin(router.allocator, version) catch return false;
+        defer router.allocator.free(bin);
+        Io.Dir.cwd().writeFile(router.io, .{ .sub_path = bin, .data = "zig" }) catch return false;
+        return true;
+    }
+};
+
+test "resolveTargetVersion auto-installs the minimum a project requires" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const zon_path = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_path);
+    try cwd.writeFile(io, .{
+        .sub_path = zon_path,
+        .data =
+        \\.{
+        \\    .name = .proj,
+        \\    .version = "0.0.0",
+        \\    .minimum_zig_version = "0.19.0",
+        \\    .dependencies = .{},
+        \\}
+        ,
+    });
+
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("ZVM_AUTO_INSTALL", "1");
+
+    var router = Router.init(&paths, io, allocator, &env);
+    router.install_hook = &StubInstaller.install;
+
+    // A failed install is reported to the caller, which turns it into an exit status.
+    StubInstaller.calls = 0;
+    StubInstaller.succeed = false;
+    try std.testing.expectError(error.Reported, router.resolveTargetVersion(tmp_path));
+    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expect(!paths.isVersionInstalled(io, "0.19.0"));
+
+    // A successful one is what the router then runs.
+    StubInstaller.calls = 0;
+    StubInstaller.succeed = true;
+    const version = try router.resolveTargetVersion(tmp_path);
+    defer allocator.free(version);
+    try std.testing.expectEqualStrings("0.19.0", version);
+    try std.testing.expectEqualStrings("0.19.0", StubInstaller.last.?);
+    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expect(paths.isVersionInstalled(io, "0.19.0"));
+}
+
+test "resolveTargetVersion installs an exact pin that is missing and refuses without the flag" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = Io.Dir.cwd();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(tmp_path);
+
+    var paths = try Paths.init(allocator, null, tmp_path);
+    defer paths.deinit();
+    try paths.ensureDirs(io);
+
+    const zon_path = try std.fs.path.join(allocator, &.{ tmp_path, "build.zig.zon" });
+    defer allocator.free(zon_path);
+    try cwd.writeFile(io, .{
+        .sub_path = zon_path,
+        .data =
+        \\.{
+        \\    .name = .proj,
+        \\    .version = "0.0.0",
+        \\    .minimum_zig_version = "0.19.0",
+        \\    .dependencies = .{},
+        \\}
+        ,
+    });
+
+    // Exact mode resolves the declared version even though nothing matches locally, so
+    // this route reaches the `isVersionInstalled` check instead of the resolve failure.
+    var env = EnvironMap.init(allocator);
+    defer env.deinit();
+    try env.put("ZVM_EXACT", "1");
+
+    var without_auto = Router.init(&paths, io, allocator, &env);
+    StubInstaller.calls = 0;
+    try std.testing.expectError(error.Reported, without_auto.resolveTargetVersion(tmp_path));
+    try std.testing.expectEqual(@as(usize, 0), StubInstaller.calls);
+
+    try env.put("ZVM_AUTO_INSTALL", "1");
+    var router = Router.init(&paths, io, allocator, &env);
+    router.install_hook = &StubInstaller.install;
+    StubInstaller.calls = 0;
+    StubInstaller.succeed = true;
+
+    const version = try router.resolveTargetVersion(tmp_path);
+    defer allocator.free(version);
+    try std.testing.expectEqualStrings("0.19.0", version);
+    try std.testing.expectEqual(@as(usize, 1), StubInstaller.calls);
+    try std.testing.expect(paths.isVersionInstalled(io, "0.19.0"));
 }
 
 test "autoInstallCandidate picks the project minimum only when auto-install is on" {
