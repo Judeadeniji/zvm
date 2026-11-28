@@ -71,9 +71,11 @@ audit time. Commit hashes are from the fix series that followed the audit.
 
 - [x] **M** Concurrent `zvm` processes could delete each other's staging
   - Staging, partial downloads, backups, and the upgrade stage now use a random suffix;
-    archives are published into the cache with an atomic rename. There is still no
-    blocking cross-process lock (a crashed process cannot strand one, but two installs
-    of the same version can briefly race on the final rename). `3e80173`.
+    archives are published into the cache with an atomic rename.
+  - `InstallLock` (`src/downloader.zig`, used by `installVersion` and `installZls`) now
+    acquires an exclusive OS advisory file lock (`<dest_dir>.lock`) so concurrent
+    installs of the same version serialize cleanly without racing on the final swap, and
+    the OS releases the lock automatically if a process terminates unexpectedly. `e9c8632`.
 
 - [x] **L** Oversized config files were silently ignored
   - `.zig-version` and `build.zig.zon` are read with bounded allocs (64 KiB / 1 MiB)
@@ -268,22 +270,22 @@ version/build does not exist, **net** = transport, **integ** = checksum/signatur
 | command | ok | bad | missing | net | integ |
 | --- | --- | --- | --- | --- | --- |
 | `install` | not exercised this round | `1` live (`not-a-version`) | `2` live (`0.99.99`) | `3` live (dead proxy) | `4` live (wrong Minisig key) |
-| `use` | not exercised this round | `1` live | `1` live (`9.9.9`) | n/a | n/a |
+| `use` | `0` live (`0.14.0` stub) | `1` live | `2` live (`9.9.9`) | n/a | n/a |
 | `pin` | `0` live (`0.14.0`) | `1` live (`not-a-version`); `1` with no argument | n/a | n/a | n/a |
-| `uninstall` | not exercised this round | `1` live | `1` live (`9.9.9`) | n/a | n/a |
+| `uninstall` | `0` live (`0.14.0` stub) | `1` live | `2` live (`9.9.9`) | n/a | n/a |
 | `list` | `0` live | n/a | n/a | n/a | n/a |
-| `list-remote` | not exercised this round | n/a | n/a | not exercised this round | n/a |
+| `list-remote` | not exercised this round | n/a | n/a | `3` live (dead proxy) | n/a |
 | `current` | `0` live (pinned, inherited) | `1` live (invalid `.zig-version`) | `0` live (prints "not installed") | n/a | n/a |
-| `which` | `0` live | `1` live (invalid `.zig-version`) | `1` live (unresolvable pin) | n/a | n/a |
-| `doctor` | `0` live | `0` live — see G1 | n/a | n/a | n/a |
+| `which` | `0` live | `1` live (invalid `.zig-version`) | `2` live (`9.9.9`) | n/a | n/a |
+| `doctor` | `0` live | `1` live (missing shim / `PATH`) | n/a | n/a | n/a |
 | `clean` | `0` live (`--dry-run`) | n/a | n/a | n/a | n/a |
-| `config` | not exercised this round (test: `ConfigAction.parse`) | n/a | n/a | n/a | n/a |
-| `env` | `0` live (`bash`) | not exercised this round | n/a | n/a | n/a |
-| `completions` | `0` live (`bash`) | not exercised this round | n/a | n/a | n/a |
-| `setup` | not exercised this round (test: `setupShim`) | n/a | n/a | n/a | n/a |
+| `config` | `0` live (`config`, `auto-install on`) | n/a | n/a | n/a | n/a |
+| `env` | `0` live (`bash`, `zsh`, `fish`, `powershell`) | not exercised this round | n/a | n/a | n/a |
+| `completions` | `0` live (`bash`, `zsh`, `fish`, `powershell`) | not exercised this round | n/a | n/a | n/a |
+| `setup` | `0` live | n/a | n/a | n/a | n/a |
 | `zls list` | `0` live | n/a | n/a | n/a | n/a |
 | `zls install` | not exercised this round | n/a | `2` live (`0.99.99`) | test only (mapping) | test only |
-| `zls uninstall` | not exercised this round | not exercised this round | not exercised this round | n/a | n/a |
+| `zls uninstall` | `0` live (`0.14.0` stub) | `1` live (`not-a-version`) | `2` live (`9.9.9`) | n/a | n/a |
 | `upgrade` | `0` live (`--nightly`, SHA-256 verified) | n/a | `2` live (`v99.9.9`) | `3` live (`--check`, dead proxy); `429` → `3` by test | test only |
 | `zig` shim | `0` live; exit forwarded (`7` → `7`) | n/a | `1` live (unresolvable pin) | n/a | n/a |
 
@@ -294,13 +296,9 @@ create/inspect/update, ANSI stripping, exit-code mapping for every domain error.
 
 ### Gaps the matrix exposes (open, uncategorised)
 
-- **G1** `zvm doctor` exits `0` with failed checks (missing shim, `bin` not in `PATH`,
-  unresolved `.zig-version`). It is a report, so this may be intended, but a script
-  cannot gate on it and no flag provides a status.
-- **G2** Only `install`, `zls install`, and `upgrade` carry the specific statuses;
-  `use`/`uninstall`/`which` exit `1` for "not installed" where `2` would mean the same
-  thing. Documented in the README, but it is a vocabulary split, not a shared one.
+- **G1** (Closed in `bf0e57a`) `zvm doctor` now exits `1` when any `.fail` check is emitted.
+- **G2** (Closed in `bf0e57a`) `use`, `uninstall`, `which`, `zls {use,which,uninstall}` now exit `2` (`unavailable`) for missing versions, and `list-remote` exits `3` (`network`) on transport failures.
 - **G3** `zls install` integrity (checksum mismatch) has a unit test only; the live path
   was never exercised, unlike `install`'s exit `4`.
-- **G4** `list-remote`, `setup`, `config`, `env main`, `completions fish/zsh`, `use`
-  success, and both uninstall success paths have no cell filled this round.
+- **G4** Live `list-remote` **ok**, `install` **ok**, and `zls install` **ok** require live
+  upstream network access and were not exercised in the offline sandbox.
