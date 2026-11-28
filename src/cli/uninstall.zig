@@ -5,6 +5,7 @@ const Io = std.Io;
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const ExitCode = @import("context.zig").ExitCode;
 const report = @import("report.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
@@ -47,6 +48,7 @@ fn handle(ctx: zli.CommandContext) UninstallError!void {
     const cwd = Io.Dir.cwd();
     cwd.access(ctx.io, v_dir, .{}) catch |err| switch (err) {
         error.FileNotFound => {
+            app.exit_code = ExitCode.unavailable;
             try app.reporter.fail("Zig version '{s}' is not installed.\n", .{canonical});
             try app.reporter.hint("Run 'zvm list' to see installed versions.\n", .{});
             return error.Reported;

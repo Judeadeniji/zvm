@@ -4,6 +4,8 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const ExitCode = @import("context.zig").ExitCode;
+const exit_codes = @import("exit_codes.zig");
 const report = @import("report.zig");
 const flags = @import("flags.zig");
 
@@ -52,6 +54,7 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
         var resolved = zvm.resolveWithOptions(app.paths, ctx.io, ctx.allocator, ctx.environ_map, app.cwd, .{
             .exact = flags.exactOverride(ctx),
         }) catch |err| {
+            app.exit_code = exit_codes.resolveFailure(err);
             try app.reporter.reportError(err);
             return error.Reported;
         };
@@ -62,6 +65,7 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
 
     if (want_zls) {
         if (!app.paths.isZlsInstalled(ctx.io, target_ver)) {
+            app.exit_code = ExitCode.unavailable;
             try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{target_ver});
             try app.reporter.hint("Run 'zvm zls install {s}' to install it.\n", .{target_ver});
             return error.Reported;
@@ -73,6 +77,7 @@ fn handle(ctx: zli.CommandContext) WhichError!void {
     }
 
     if (!app.paths.isVersionInstalled(ctx.io, target_ver)) {
+        app.exit_code = ExitCode.unavailable;
         try app.reporter.fail("Zig version '{s}' is not installed.\n", .{target_ver});
         try app.reporter.hint("Run 'zvm install {s}' to install it.\n", .{target_ver});
         return error.Reported;

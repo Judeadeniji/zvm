@@ -4,6 +4,7 @@ const std = @import("std");
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const ExitCode = @import("context.zig").ExitCode;
 const report = @import("report.zig");
 const zls_cmd = @import("zls.zig");
 
@@ -47,6 +48,7 @@ fn handle(ctx: zli.CommandContext) !void {
     defer ctx.allocator.free(canonical);
 
     if (!app.paths.isVersionInstalled(ctx.io, canonical)) {
+        app.exit_code = ExitCode.unavailable;
         try app.reporter.fail("Zig version '{s}' is not installed.\n", .{canonical});
         try app.reporter.hint("Run 'zvm install {s}' first.\n", .{canonical});
         return error.Reported;

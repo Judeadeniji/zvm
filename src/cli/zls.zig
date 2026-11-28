@@ -5,6 +5,7 @@ const Io = std.Io;
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const ExitCode = @import("context.zig").ExitCode;
 const flags = @import("flags.zig");
 const report = @import("report.zig");
 const exit_codes = @import("exit_codes.zig");
@@ -137,6 +138,7 @@ fn resolveTargetZigVersion(app: *AppContext, ctx: zli.CommandContext, raw_arg: ?
         .exact = flags.exactOverride(ctx),
     }) catch |err| switch (err) {
         zvm.errors.ResolveError.NoVersionConfigured => {
+            app.exit_code = ExitCode.unavailable;
             try app.reporter.fail("No Zig version is configured.\n", .{});
             try app.reporter.hint("Pass a Zig version (e.g. 'zvm zls install 0.14.0') or run 'zvm use <version>'.\n", .{});
             return error.Reported;
@@ -145,10 +147,12 @@ fn resolveTargetZigVersion(app: *AppContext, ctx: zli.CommandContext, raw_arg: ?
             if (try zvm.resolver.findProjectMinimumVersion(ctx.io, ctx.allocator, app.cwd)) |min_ver| {
                 return min_ver;
             }
+            app.exit_code = ExitCode.unavailable;
             try app.reporter.fail("No installed Zig version satisfies the project's constraint.\n", .{});
             return error.Reported;
         },
         zvm.errors.ResolveError.UnmatchedZigVersionConstraint => {
+            app.exit_code = ExitCode.unavailable;
             try app.reporter.fail("No installed Zig version satisfies the constraint in .zig-version.\n", .{});
             try app.reporter.hint("Pass a Zig version explicitly (e.g. 'zvm zls install 0.17.0').\n", .{});
             return error.Reported;
@@ -305,6 +309,7 @@ fn handleUse(ctx: zli.CommandContext) !void {
     defer ctx.allocator.free(canonical);
 
     if (!app.paths.isZlsInstalled(ctx.io, canonical)) {
+        app.exit_code = ExitCode.unavailable;
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{canonical});
         try app.reporter.hint("Run 'zvm zls install {s}' first.\n", .{canonical});
         return error.Reported;
@@ -320,6 +325,7 @@ fn handleWhich(ctx: zli.CommandContext) !void {
     defer ctx.allocator.free(zig_ver);
 
     if (!app.paths.isZlsInstalled(ctx.io, zig_ver)) {
+        app.exit_code = ExitCode.unavailable;
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{zig_ver});
         try app.reporter.hint("Run 'zvm zls install {s}' to install it.\n", .{zig_ver});
         return error.Reported;
@@ -345,6 +351,7 @@ fn handleUninstall(ctx: zli.CommandContext) !void {
     defer ctx.allocator.free(v_dir);
 
     if (!app.paths.isZlsInstalled(ctx.io, canonical)) {
+        app.exit_code = ExitCode.unavailable;
         try app.reporter.fail("ZLS for Zig '{s}' is not installed.\n", .{canonical});
         return error.Reported;
     }

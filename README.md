@@ -163,16 +163,14 @@ Editor setup guides: [VS Code](docs/editors/vscode.md) · [Neovim](docs/editors/
 
 ### Exit codes
 
-`zvm install` exits with a status that names *why* the install failed, so scripts do not have to parse the message:
+`zvm` commands use consistent exit statuses so scripts do not have to parse error output:
 
 | Code | Meaning |
 |---|---|
-| `1` | Generic failure (invalid arguments, unsatisfied project pin) |
-| `2` | The requested version, or a build for this platform, does not exist |
-| `3` | The download from ziglang.org failed |
+| `1` | Generic failure (invalid arguments, malformed config, failed `zvm doctor` check) |
+| `2` | The requested version or platform build is not available (upstream or locally) |
+| `3` | A network request failed (`install`, `list-remote`, `zls install`, `upgrade`) |
 | `4` | A SHA-256 checksum or Minisig signature did not verify |
-
-`zvm zls install` and `zvm upgrade` use the same statuses for their own downloads. Other commands report failures with `1`.
 
 ---
 

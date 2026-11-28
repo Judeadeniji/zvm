@@ -3,6 +3,7 @@
 const zli = @import("zli");
 const zvm = @import("zvm");
 const AppContext = @import("context.zig").AppContext;
+const exit_codes = @import("exit_codes.zig");
 
 pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Command {
     const cmd = try zli.Command.init(init_options, .{
@@ -27,6 +28,7 @@ fn handle(ctx: zli.CommandContext) !void {
 
     const json_bytes = zvm.downloader.fetchIndexJson(ctx.io, ctx.allocator, ctx.environ_map) catch |err| {
         ctx.spinner.stop();
+        app.exit_code = exit_codes.listRemoteFailure(err);
         switch (err) {
             zvm.errors.DownloadError.HttpRequestFailed => {
                 try app.reporter.fail("Could not fetch the Zig release index from ziglang.org.\n", .{});

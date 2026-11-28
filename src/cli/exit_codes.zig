@@ -22,9 +22,13 @@ pub fn installFailure(err: anyerror) u8 {
 
         zvm.errors.DownloadError.ChecksumMismatch,
         zvm.errors.DownloadError.InvalidExpectedChecksum,
-        zvm.errors.DownloadError.SignatureVerificationFailed,
-        zvm.errors.DownloadError.GlobalSignatureVerificationFailed,
-        zvm.errors.DownloadError.KeyIdMismatch,
+        zvm.errors.MinisigError.InvalidPublicKey,
+        zvm.errors.MinisigError.UnsupportedKeyAlgorithm,
+        zvm.errors.MinisigError.InvalidSignatureFormat,
+        zvm.errors.MinisigError.UnsupportedSignatureAlgorithm,
+        zvm.errors.MinisigError.SignatureVerificationFailed,
+        zvm.errors.MinisigError.GlobalSignatureVerificationFailed,
+        zvm.errors.MinisigError.KeyIdMismatch,
         => ExitCode.integrity,
 
         else => 0,
@@ -70,6 +74,23 @@ pub fn upgradeFailure(err: anyerror) u8 {
     };
 }
 
+/// `zvm list-remote`: fetching the upstream release index.
+pub fn listRemoteFailure(err: anyerror) u8 {
+    if (isTransport(err)) return ExitCode.network;
+    return 0;
+}
+
+/// `zvm which` / `zvm zls`: resolving a configured version from the environment or project.
+pub fn resolveFailure(err: anyerror) u8 {
+    return switch (err) {
+        zvm.errors.ResolveError.NoVersionConfigured,
+        zvm.errors.ResolveError.NoCompatibleVersionInstalled,
+        zvm.errors.ResolveError.UnmatchedZigVersionConstraint,
+        => ExitCode.unavailable,
+        else => 0,
+    };
+}
+
 /// Whether the failure is about reaching the host. A dead host reaches a command
 /// unwrapped from the metadata fetch, so this recognizes more than the download
 /// error that wraps it.
@@ -84,8 +105,23 @@ test "installFailure classifies unavailable, transport, and integrity failures" 
     try std.testing.expectEqual(ExitCode.network, installFailure(error.ConnectionRefused));
     try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.DownloadError.ChecksumMismatch));
     try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.DownloadError.KeyIdMismatch));
+    try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.MinisigError.InvalidPublicKey));
+    try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.MinisigError.InvalidSignatureFormat));
+    try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.MinisigError.UnsupportedKeyAlgorithm));
+    try std.testing.expectEqual(ExitCode.integrity, installFailure(zvm.errors.MinisigError.UnsupportedSignatureAlgorithm));
     // Anything else keeps the generic status rather than inventing one.
     try std.testing.expectEqual(0, installFailure(error.OutOfMemory));
+}
+
+test "listRemoteFailure and resolveFailure map transport and missing-version errors" {
+    try std.testing.expectEqual(ExitCode.network, listRemoteFailure(zvm.errors.DownloadError.HttpRequestFailed));
+    try std.testing.expectEqual(ExitCode.network, listRemoteFailure(error.ConnectionRefused));
+    try std.testing.expectEqual(0, listRemoteFailure(error.OutOfMemory));
+
+    try std.testing.expectEqual(ExitCode.unavailable, resolveFailure(zvm.errors.ResolveError.NoVersionConfigured));
+    try std.testing.expectEqual(ExitCode.unavailable, resolveFailure(zvm.errors.ResolveError.NoCompatibleVersionInstalled));
+    try std.testing.expectEqual(ExitCode.unavailable, resolveFailure(zvm.errors.ResolveError.UnmatchedZigVersionConstraint));
+    try std.testing.expectEqual(0, resolveFailure(zvm.errors.ResolveError.InvalidZigVersionConstraint));
 }
 
 test "zlsFailure and upgradeFailure use the same vocabulary" {

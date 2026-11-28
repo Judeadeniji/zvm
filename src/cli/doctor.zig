@@ -19,6 +19,7 @@ pub fn command(init_options: zli.InitOptions) zli.CommandSetupErrors!*zli.Comman
 fn handle(ctx: zli.CommandContext) !void {
     const app = ctx.getContextData(AppContext);
     const cwd = Io.Dir.cwd();
+    var has_failure = false;
 
     try app.reporter.heading("zvm doctor\n\n", .{});
 
@@ -76,9 +77,11 @@ fn handle(ctx: zli.CommandContext) !void {
             try app.reporter.status(.ok, "Zig shim: {s} -> {s}\n", .{ shim_path, target });
         },
         .missing => {
+            has_failure = true;
             try app.reporter.status(.fail, "Zig shim missing at {s} (run 'zvm setup')\n", .{shim_path});
         },
         .broken_symlink => |target| {
+            has_failure = true;
             try app.reporter.status(.fail, "Zig shim symlink is broken: {s} -> {s} (run 'zvm setup --force')\n", .{ shim_path, target });
         },
         .wrong_target => |target| {
@@ -110,6 +113,7 @@ fn handle(ctx: zli.CommandContext) !void {
             try app.reporter.status(.info, "ZLS shim: not configured at {s} (run 'zvm setup')\n", .{zls_shim_path});
         },
         .broken_symlink => |target| {
+            has_failure = true;
             try app.reporter.status(.fail, "ZLS shim symlink is broken: {s} -> {s} (run 'zvm setup --force')\n", .{ zls_shim_path, target });
         },
         .wrong_target => |target| {
@@ -125,6 +129,7 @@ fn handle(ctx: zli.CommandContext) !void {
     defer path_check.deinit(ctx.allocator);
 
     if (!path_check.bin_dir_in_path) {
+        has_failure = true;
         try app.reporter.status(.fail, "'{s}' is not in PATH\n", .{app.paths.bin_dir});
         if (!zvm.Paths.is_windows) {
             try app.reporter.muted("       Add: export PATH=\"{s}:$PATH\"\n", .{app.paths.bin_dir});
@@ -187,4 +192,6 @@ fn handle(ctx: zli.CommandContext) !void {
     } else {
         try app.reporter.status(.info, "Paired ZLS for Zig {s}: not installed (optional: 'zvm zls install')\n", .{resolved.version});
     }
+
+    if (has_failure) return error.Reported;
 }
