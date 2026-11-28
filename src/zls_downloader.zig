@@ -137,6 +137,9 @@ pub fn installZls(
     const install_dir = try paths.zlsVersionDir(allocator, zig_version_key);
     errdefer allocator.free(install_dir);
 
+    var install_lock = try downloader.InstallLock.acquire(io, allocator, install_dir);
+    defer install_lock.release();
+
     // For `master`, resolve the concrete Zig dev version recorded in `.zvm-version` if available.
     const query_version: []u8 = blk: {
         if (std.mem.eql(u8, zig_version_key, "master")) {

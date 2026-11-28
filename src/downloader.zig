@@ -769,6 +769,45 @@ fn ensureCachedZigArchive(
     };
 }
 
+/// Exclusive advisory lock on `<dest_dir_path>.lock` so concurrent `zvm`
+/// processes installing the same version serialize cleanly without racing on
+/// the final directory swap. The OS releases the lock automatically if the
+/// process terminates unexpectedly.
+pub const InstallLock = struct {
+    file: Io.File,
+    io: Io,
+    locked: bool,
+
+    pub fn acquire(io: Io, allocator: Allocator, dest_dir_path: []const u8) !InstallLock {
+        const lock_path = try allocator.print("{s}.lock", .{dest_dir_path});
+        defer allocator.free(lock_path);
+
+        const file = try Io.Dir.cwd().createFile(io, lock_path, .{ .read = true, .truncate = false });
+        errdefer file.close(io);
+
+        var locked = true;
+        file.lock(io, .exclusive) catch |err| switch (err) {
+            // Do not fail installs on filesystems that do not support advisory locks.
+            error.FileLocksUnsupported => locked = false,
+            else => return err,
+        };
+
+        return .{
+            .file = file,
+            .io = io,
+            .locked = locked,
+        };
+    }
+
+    pub fn release(self: *InstallLock) void {
+        if (self.locked) {
+            self.file.unlock(self.io);
+            self.locked = false;
+        }
+        self.file.close(self.io);
+    }
+};
+
 /// Downloads, verifies, and installs the requested Zig version into `paths.versions_dir`.
 pub fn installVersion(
     paths: *const Paths,
@@ -782,6 +821,9 @@ pub fn installVersion(
 
     const install_dir = try paths.versionDir(allocator, version_key);
     errdefer allocator.free(install_dir);
+
+    var install_lock = try InstallLock.acquire(io, allocator, install_dir);
+    defer install_lock.release();
 
     const is_master = std.mem.eql(u8, version_key, "master");
     if (!options.force and !is_master and paths.isVersionInstalled(io, version_key)) {
@@ -865,6 +907,43 @@ pub fn installVersion(
         .already_installed = false,
         .minisig_verified = minisig_verified,
     };
+}
+
+test "InstallLock serializes exclusive access and releases cleanly" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(tmp_path);
+
+    const dest_dir = try std.fs.path.join(allocator, &.{ tmp_path, "0.17.0" });
+    defer allocator.free(dest_dir);
+
+    var lock = try InstallLock.acquire(io, allocator, dest_dir);
+    var released = false;
+    defer if (!released) lock.release();
+
+    const lock_path = try allocator.print("{s}.lock", .{dest_dir});
+    defer allocator.free(lock_path);
+
+    const probe = try Io.Dir.cwd().openFile(io, lock_path, .{ .mode = .read_write });
+    defer probe.close(io);
+
+    // On filesystems supporting advisory locks, a second handle cannot acquire `.exclusive` while held.
+    if (lock.locked) {
+        const acquired = try probe.tryLock(io, .exclusive);
+        try std.testing.expect(!acquired);
+    }
+
+    lock.release();
+    released = true;
+
+    const acquired_after = try probe.tryLock(io, .exclusive);
+    try std.testing.expect(acquired_after);
+    probe.unlock(io);
 }
 
 test "targetKey mapping" {
