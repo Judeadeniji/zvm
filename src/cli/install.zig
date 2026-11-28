@@ -229,4 +229,3 @@ fn handle(ctx: zli.CommandContext) !void {
         try zls_cmd.installZlsWithSpinner(app, ctx, canonical, force);
     }
 }
-
